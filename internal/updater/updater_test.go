@@ -61,6 +61,19 @@ func TestAssetName(t *testing.T) {
 	}
 }
 
+func TestFindChecksumShouldSupportPathPrefixedAssetName(t *testing.T) {
+	sum := strings.Repeat("a", 64)
+	sumData := []byte(sum + "  dist/td-darwin-arm64\n")
+
+	got, ok := FindChecksum(sumData, "td-darwin-arm64")
+	if !ok {
+		t.Fatalf("FindChecksum should match path-prefixed asset name")
+	}
+	if got != sum {
+		t.Fatalf("checksum = %q, want %q", got, sum)
+	}
+}
+
 func TestCheckDetectsUpdate(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/roobtyan/td/releases/latest" {

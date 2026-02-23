@@ -293,7 +293,11 @@ func FindChecksum(sumData []byte, assetName string) (string, bool) {
 			continue
 		}
 		name := strings.TrimPrefix(fields[1], "*")
-		if name == assetName {
+		baseName := strings.ReplaceAll(name, "\\", "/")
+		if idx := strings.LastIndex(baseName, "/"); idx >= 0 {
+			baseName = baseName[idx+1:]
+		}
+		if name == assetName || baseName == assetName {
 			return fields[0], true
 		}
 	}
