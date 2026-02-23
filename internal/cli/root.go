@@ -24,6 +24,8 @@ func NewRootCmd(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newRestoreCmd(cfg))
 	cmd.AddCommand(newPurgeCmd(cfg))
 	cmd.AddCommand(newUICmd(cfg))
+	cmd.AddCommand(newVersionCmd())
+	cmd.AddCommand(newUpgradeCmd())
 	return cmd
 }
 

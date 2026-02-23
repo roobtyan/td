@@ -60,6 +60,34 @@ td rm 1
 td restore 1
 td purge 1
 td ui
+td version
+td upgrade --check
+td upgrade
+```
+
+## 自升级
+
+```bash
+# 仅检测是否有新版本
+td upgrade --check
+
+# 自动下载并替换当前平台二进制
+td upgrade
+```
+
+说明：
+- 升级源使用 GitHub Releases（`roobtyan/td`）。
+- 会自动匹配当前平台制品（`darwin/linux` + `amd64/arm64`）。
+- 若发布包含 `sha256sum.txt`，会自动做校验。
+
+构建时可注入版本信息：
+
+```bash
+go build -ldflags "\
+  -X td/internal/buildinfo.Version=v0.1.0 \
+  -X td/internal/buildinfo.Commit=$(git rev-parse --short HEAD) \
+  -X td/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o bin/td ./cmd/td
 ```
 
 ## 配置与数据目录
