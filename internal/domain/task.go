@@ -6,9 +6,10 @@ type Task struct {
 	ID        int64
 	Title     string
 	Notes     string
-	Status    string
+	Status    Status
 	Project   string
 	Priority  string
+	DoneAt    *time.Time
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
