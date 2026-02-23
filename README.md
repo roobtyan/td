@@ -1,107 +1,173 @@
 # td
 
-本项目是 **TD MVP-A**：本地优先的终端 Todo 工具，提供 CLI 与双栏 TUI。
+`td` 是一个本地优先的终端 Todo 工具，支持 CLI 和单页 TUI。
+**目标**：做最好用的终端 Todo + Ai 应用，帮助用户高效管理任务。
 
-## 功能
+## 功能概览
 
-- 任务命令：`add / ls / show / done / reopen / edit / rm / restore / purge`
-- TUI：左侧导航（今日 / Inbox / 日志 / 项目 / 回收站）+ 右侧列表
-- 剪贴板：`--clip` 规则解析
-- AI 解析：`--clip --ai`（schema 校验失败自动回退规则解析）
-- 数据存储：SQLite（本地）
+- 任务生命周期：`inbox -> todo -> doing -> done -> deleted`
+- CLI：新增、编辑、标记、删除、恢复、清空、项目管理、截止时间
+- TUI：单页双栏视图（Today / Inbox / Log / Project / Trash）
+- 剪贴板创建：`--clip`
+- AI 解析创建：`--clip --ai`（失败自动回退规则解析）
+- 本地存储：SQLite（默认 `~/.td/data/td.db`）
+- 自升级：从 GitHub Releases 检测并升级
 
-## 状态机
+## 安装
 
-- `inbox`
-- `todo`
-- `doing`
-- `done`
-- `deleted`
+### 方式 1：下载 Release 二进制（推荐）
 
-## 安装与运行
+在 [Releases](https://github.com/roobtyan/td/releases) 下载对应平台文件：
 
-### 方式 1：下载 Release 制品（推荐）
+- `td-darwin-amd64`（macOS Intel）
+- `td-darwin-arm64`（macOS Apple Silicon）
+- `td-linux-amd64`（Linux x86_64）
+- `td-linux-arm64`（Linux ARM64）
 
-在 [Releases](https://github.com/roobtyan/td/releases) 下载对应平台二进制：
-
-- macOS Intel: `td-darwin-amd64`
-- macOS Apple Silicon: `td-darwin-arm64`
-- Linux x86_64: `td-linux-amd64`
-- Linux ARM64: `td-linux-arm64`
-
-下载后加执行权限并放入 PATH：
+示例（macOS Apple Silicon）：
 
 ```bash
-chmod +x td-*
-mv td-darwin-arm64 /usr/local/bin/td
+chmod +x td-darwin-arm64
+sudo mv td-darwin-arm64 /usr/local/bin/td
+td version
 ```
 
 ### 方式 2：源码运行
 
 ```bash
-go test ./... -v
+go test ./... -count=1
 go run ./cmd/td --help
-go run ./cmd/td add "buy milk"
-go run ./cmd/td ls
-go run ./cmd/td ui
 ```
 
-## 常用命令
+## 快速开始
 
 ```bash
 td add "buy milk"
-td add --clip
-td add --clip --ai
+td add "prepare slides" -p work --due "2026-02-25 18:00"
 td ls
-td show 1
+td ls today
 td done 1
 td reopen 1
 td rm 1
 td restore 1
-td purge 1
+td ui
+```
+
+## CLI 命令
+
+```bash
+td add <text> [--project|-p] [--priority|-P] [--due]
+td ls [today]
+td show <id>
+td edit <id> <title>
+td done <id...>
+td reopen <id...>
+td today <id...>
+td due <id> <datetime> [--clear]
+td rm <id...>
+td restore <id...>
+td purge <id...>
+td project ls|add|rename|rm ...
 td ui
 td version
-td upgrade --check
-td upgrade
+td upgrade [--check]
 ```
+
+### `due` 输入格式
+
+`add --due` 与 `due` 命令支持以下格式：
+
+- `YYYY-MM-DD`
+- `YYYY-MM-DD HH:MM`
+- `YYYY-MM-DDTHH:MM`
+- `YYYYMMDDHHMM`（例如：`202602051122`）
+- RFC3339
+
+### `ls` 说明
+
+- `td ls`：默认不显示 `deleted` 任务
+- `td ls today`：按 today 规则筛选
+- 输出列：`id / status / title / project / due`
+
+## TUI 使用
+
+启动：
+
+```bash
+td ui
+```
+
+界面预览：
+
+![td 主界面](assets/main_ui.png)
+
+退出：按 `q`
+
+常用快捷键：
+
+- `j/k` 上下移动
+- `Tab` 切换焦点（导航/任务）
+- `Enter` 选择视图或项目
+- `a` 新建任务
+- `e` 编辑标题
+- `x` 删除
+- `c` 标记 done
+- `t` 在 `doing` 与 `todo` 之间切换
+- `P` 设置项目
+- `d` 设置截止时间
+- `z` 撤销最近删除
+- `?` 打开帮助
+
+Trash 视图专用：
+
+- `r` 恢复选中任务
+- `X` 清空垃圾桶
 
 ## 自升级
 
 ```bash
-# 仅检测是否有新版本
 td upgrade --check
-
-# 自动下载并替换当前平台二进制
 td upgrade
 ```
 
-说明：
-- 升级源使用 GitHub Releases（`roobtyan/td`）。
-- 会自动匹配当前平台制品（`darwin/linux` + `amd64/arm64`）。
-- 若发布包含 `sha256sum.txt`，会自动做校验。
+### 升级常见问题
 
-构建时可注入版本信息：
+1. 代理导致超时（`context deadline exceeded`）
 
 ```bash
-go build -ldflags "\
-  -X td/internal/buildinfo.Version=v0.1.0 \
-  -X td/internal/buildinfo.Commit=$(git rev-parse --short HEAD) \
-  -X td/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -o bin/td ./cmd/td
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
+td upgrade --check
+td upgrade
 ```
+
+2. 无权限覆盖 `/usr/local/bin/td`
+
+```bash
+sudo -E td upgrade
+```
+
+`-E` 用于保留代理环境变量。
 
 ## 配置与数据目录
 
 - 默认目录：`$HOME/.td`
-- 可通过 `TD_HOME` 覆盖
-- 数据库文件：`$TD_HOME/data/td.db`
+- 可通过环境变量 `TD_HOME` 覆盖
+- 数据库：`$TD_HOME/data/td.db`
 
-## MVP-A 边界
+## 开发
 
-- 包含：CLI 核心命令、双栏 TUI、剪贴板规则解析、AI 解析回退
-- 不包含：`archived`、triage、expand
+```bash
+go test ./... -count=1
+go build -o bin/td ./cmd/td
+```
 
-## 隐私说明
+注入版本信息构建：
 
-- 数据默认仅保存在本地 SQLite。
-- 仅在显式使用 `--clip --ai` 时才触发 AI 解析流程。
+```bash
+go build -ldflags "\
+  -X td/internal/buildinfo.Version=v0.3.1 \
+  -X td/internal/buildinfo.Commit=$(git rev-parse --short HEAD) \
+  -X td/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o bin/td ./cmd/td
+```
