@@ -13,11 +13,12 @@ import (
 type AddFromClipboardUseCase struct {
 	Repo          repo.TaskRepository
 	ReadClipboard func() (string, error)
+	AIParser      *AIParseTaskUseCase
 	Project       string
 	Priority      string
 }
 
-func (u AddFromClipboardUseCase) AddFromClipboard(ctx context.Context, text string, _ bool) (domain.Task, error) {
+func (u AddFromClipboardUseCase) AddFromClipboard(ctx context.Context, text string, useAI bool) (domain.Task, error) {
 	if strings.TrimSpace(text) == "" {
 		reader := u.ReadClipboard
 		if reader == nil {
@@ -31,19 +32,32 @@ func (u AddFromClipboardUseCase) AddFromClipboard(ctx context.Context, text stri
 	}
 
 	parsed := clipboard.ParseByRule(text)
+	if useAI && u.AIParser != nil {
+		aiParsed, err := u.AIParser.ParseTask(ctx, text)
+		if err == nil {
+			parsed = aiParsed
+		}
+	}
 	if strings.TrimSpace(parsed.Title) == "" {
 		return domain.Task{}, errors.New("clipboard text is empty")
 	}
 
 	priority := u.Priority
 	if priority == "" {
-		priority = "P2"
+		priority = parsed.Priority
+		if priority == "" {
+			priority = "P2"
+		}
+	}
+	project := u.Project
+	if project == "" {
+		project = parsed.Project
 	}
 	id, err := u.Repo.Create(ctx, domain.Task{
 		Title:    parsed.Title,
 		Notes:    parsed.Notes,
 		Status:   domain.StatusInbox,
-		Project:  u.Project,
+		Project:  project,
 		Priority: priority,
 	})
 	if err != nil {

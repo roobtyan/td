@@ -38,7 +38,10 @@ func NewModel() Model {
 
 func NewModelWithRepo(r repo.TaskRepository) Model {
 	m := NewModelWithQuery(usecase.NewNavQueryUseCase(r))
-	m.clipUseCase = usecase.AddFromClipboardUseCase{Repo: r}
+	m.clipUseCase = usecase.AddFromClipboardUseCase{
+		Repo:     r,
+		AIParser: &usecase.AIParseTaskUseCase{},
+	}
 	return m
 }
 
@@ -94,9 +97,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.listCursor = 0
 				m.reload()
 			}
-		case "p":
+		case KeyClipAdd:
 			if m.clipUseCase.Repo != nil {
 				_, _ = m.clipUseCase.AddFromClipboard(context.Background(), "", false)
+				m.reload()
+			}
+		case KeyClipAddAI:
+			if m.clipUseCase.Repo != nil {
+				_, _ = m.clipUseCase.AddFromClipboard(context.Background(), "", true)
 				m.reload()
 			}
 		}

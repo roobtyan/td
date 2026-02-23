@@ -14,6 +14,7 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 		project  string
 		priority string
 		fromClip bool
+		useAI    bool
 	)
 
 	cmd := &cobra.Command{
@@ -35,13 +36,18 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 			var taskTitle string
 			var taskID int64
 			if fromClip {
+				var aiParser *usecase.AIParseTaskUseCase
+				if useAI {
+					aiParser = &usecase.AIParseTaskUseCase{}
+				}
 				uc := usecase.AddFromClipboardUseCase{
 					Repo:     repo,
+					AIParser: aiParser,
 					Project:  project,
 					Priority: priority,
 				}
 				clipText := strings.Join(args, " ")
-				task, err := uc.AddFromClipboard(cmd.Context(), clipText, false)
+				task, err := uc.AddFromClipboard(cmd.Context(), clipText, useAI)
 				if err != nil {
 					return err
 				}
@@ -69,5 +75,6 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 	cmd.Flags().StringVarP(&project, "project", "p", "", "project")
 	cmd.Flags().StringVarP(&priority, "priority", "P", "P2", "priority")
 	cmd.Flags().BoolVar(&fromClip, "clip", false, "create from clipboard")
+	cmd.Flags().BoolVar(&useAI, "ai", false, "parse clipboard with AI and fallback to rules")
 	return cmd
 }

@@ -5,4 +5,6 @@ const (
 	KeyDown        = "j"
 	KeyUp          = "k"
 	KeySelect      = "enter"
+	KeyClipAdd     = "p"
+	KeyClipAddAI   = "ctrl+a"
 )

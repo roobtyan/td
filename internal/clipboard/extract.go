@@ -8,9 +8,11 @@ import (
 var linkRegexp = regexp.MustCompile(`https?://[^\s]+`)
 
 type ParsedTask struct {
-	Title string
-	Notes string
-	Links []string
+	Title    string
+	Notes    string
+	Project  string
+	Priority string
+	Links    []string
 }
 
 func ExtractLinks(text string) []string {
@@ -44,9 +46,10 @@ func ParseByRule(raw string) ParsedTask {
 	}
 
 	return ParsedTask{
-		Title: title,
-		Notes: normalized,
-		Links: links,
+		Title:    title,
+		Notes:    normalized,
+		Priority: "P2",
+		Links:    links,
 	}
 }
 
