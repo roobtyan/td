@@ -9,6 +9,7 @@ type Task struct {
 	Status    Status
 	Project   string
 	Priority  string
+	DueAt     *time.Time
 	DoneAt    *time.Time
 	CreatedAt time.Time
 	UpdatedAt time.Time

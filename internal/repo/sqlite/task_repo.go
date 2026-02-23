@@ -55,11 +55,12 @@ func (r *TaskRepository) GetByID(ctx context.Context, id int64) (domain.Task, er
 	var (
 		task      domain.Task
 		rawStatus string
+		dueAt     sql.NullTime
 		doneAt    sql.NullTime
 	)
 	err := r.db.QueryRowContext(
 		ctx,
-		`SELECT id, title, notes, status, project, priority, done_at, created_at, updated_at
+		`SELECT id, title, notes, status, project, priority, due_at, done_at, created_at, updated_at
 		   FROM tasks
 		  WHERE id = ?`,
 		id,
@@ -70,6 +71,7 @@ func (r *TaskRepository) GetByID(ctx context.Context, id int64) (domain.Task, er
 		&rawStatus,
 		&task.Project,
 		&task.Priority,
+		&dueAt,
 		&doneAt,
 		&task.CreatedAt,
 		&task.UpdatedAt,
@@ -86,6 +88,10 @@ func (r *TaskRepository) GetByID(ctx context.Context, id int64) (domain.Task, er
 		return domain.Task{}, err
 	}
 	task.Status = status
+	if dueAt.Valid {
+		t := dueAt.Time.UTC()
+		task.DueAt = &t
+	}
 	if doneAt.Valid {
 		t := doneAt.Time.UTC()
 		task.DoneAt = &t
@@ -94,7 +100,7 @@ func (r *TaskRepository) GetByID(ctx context.Context, id int64) (domain.Task, er
 }
 
 func (r *TaskRepository) List(ctx context.Context, filter repo.TaskListFilter) ([]domain.Task, error) {
-	query := `SELECT id, title, notes, status, project, priority, done_at, created_at, updated_at
+	query := `SELECT id, title, notes, status, project, priority, due_at, done_at, created_at, updated_at
 	            FROM tasks`
 	args := make([]any, 0, 2)
 	clauses := make([]string, 0, 2)
@@ -253,6 +259,7 @@ func scanTask(scanner interface {
 	var (
 		task      domain.Task
 		rawStatus string
+		dueAt     sql.NullTime
 		doneAt    sql.NullTime
 	)
 	if err := scanner.Scan(
@@ -262,6 +269,7 @@ func scanTask(scanner interface {
 		&rawStatus,
 		&task.Project,
 		&task.Priority,
+		&dueAt,
 		&doneAt,
 		&task.CreatedAt,
 		&task.UpdatedAt,
@@ -274,6 +282,10 @@ func scanTask(scanner interface {
 		return domain.Task{}, fmt.Errorf("parse status %q: %w", rawStatus, err)
 	}
 	task.Status = status
+	if dueAt.Valid {
+		t := dueAt.Time.UTC()
+		task.DueAt = &t
+	}
 	if doneAt.Valid {
 		t := doneAt.Time.UTC()
 		task.DoneAt = &t
