@@ -139,6 +139,60 @@ func (r *TaskRepository) Reopen(ctx context.Context, ids []int64) error {
 	return r.transit(ctx, ids, domain.StatusTodo)
 }
 
+func (r *TaskRepository) SoftDelete(ctx context.Context, ids []int64) error {
+	return r.transit(ctx, ids, domain.StatusDeleted)
+}
+
+func (r *TaskRepository) Restore(ctx context.Context, ids []int64) error {
+	return r.transit(ctx, ids, domain.StatusTodo)
+}
+
+func (r *TaskRepository) Purge(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, id := range ids {
+		status, err := r.statusByID(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if status != domain.StatusDeleted {
+			return domain.NewInvalidTransitionError(status, domain.StatusDeleted)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *TaskRepository) UpdateTitle(ctx context.Context, id int64, title string) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET title = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE id = ?`,
+		title, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrTaskNotFound
+	}
+	return nil
+}
+
 func (r *TaskRepository) transit(ctx context.Context, ids []int64, to domain.Status) error {
 	if len(ids) == 0 {
 		return nil
