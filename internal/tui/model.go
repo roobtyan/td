@@ -27,6 +27,7 @@ type Model struct {
 	listCursor   int
 	width        int
 	queryUseCase usecase.NavQueryUseCase
+	clipUseCase  usecase.AddFromClipboardUseCase
 	now          func() time.Time
 	tasks        []domain.Task
 }
@@ -36,7 +37,9 @@ func NewModel() Model {
 }
 
 func NewModelWithRepo(r repo.TaskRepository) Model {
-	return NewModelWithQuery(usecase.NewNavQueryUseCase(r))
+	m := NewModelWithQuery(usecase.NewNavQueryUseCase(r))
+	m.clipUseCase = usecase.AddFromClipboardUseCase{Repo: r}
+	return m
 }
 
 func NewModelWithQuery(uc usecase.NavQueryUseCase) Model {
@@ -89,6 +92,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == focusNav {
 				m.activeView = m.navItems[m.navIndex].View
 				m.listCursor = 0
+				m.reload()
+			}
+		case "p":
+			if m.clipUseCase.Repo != nil {
+				_, _ = m.clipUseCase.AddFromClipboard(context.Background(), "", false)
 				m.reload()
 			}
 		}
