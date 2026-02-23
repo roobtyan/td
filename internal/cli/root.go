@@ -23,6 +23,7 @@ func NewRootCmd(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newRmCmd(cfg))
 	cmd.AddCommand(newRestoreCmd(cfg))
 	cmd.AddCommand(newPurgeCmd(cfg))
+	cmd.AddCommand(newUICmd(cfg))
 	return cmd
 }
 
