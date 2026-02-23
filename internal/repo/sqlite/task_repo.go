@@ -34,12 +34,15 @@ func (r *TaskRepository) Create(ctx context.Context, task domain.Task) (int64, e
 	if priority == "" {
 		priority = "P2"
 	}
+	if err := r.ensureProject(ctx, task.Project); err != nil {
+		return 0, err
+	}
 
 	res, err := r.db.ExecContext(
 		ctx,
-		`INSERT INTO tasks(title, notes, status, project, priority)
-		 VALUES(?, ?, ?, ?, ?)`,
-		task.Title, task.Notes, string(status), task.Project, priority,
+		`INSERT INTO tasks(title, notes, status, project, priority, due_at)
+		 VALUES(?, ?, ?, ?, ?, ?)`,
+		task.Title, task.Notes, string(status), task.Project, priority, task.DueAt,
 	)
 	if err != nil {
 		return 0, err
@@ -137,8 +140,124 @@ func (r *TaskRepository) List(ctx context.Context, filter repo.TaskListFilter) (
 	return tasks, nil
 }
 
+func (r *TaskRepository) CreateProject(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("project name is empty")
+	}
+	return r.ensureProject(ctx, name)
+}
+
+func (r *TaskRepository) ListProjects(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT name FROM (
+		    SELECT name FROM projects
+		    UNION
+		    SELECT DISTINCT project AS name FROM tasks WHERE project <> ''
+		  )
+		  ORDER BY name ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0, 8)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *TaskRepository) RenameProject(ctx context.Context, oldName, newName string) error {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	if oldName == "" || newName == "" {
+		return errors.New("project name is empty")
+	}
+	if oldName == newName {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	exists, err := projectExists(ctx, tx, oldName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return domain.ErrTaskNotFound
+	}
+	if err := ensureProjectTx(ctx, tx, newName); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET project = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE project = ?`,
+		newName, oldName,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE name = ?`, oldName); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *TaskRepository) DeleteProject(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("project name is empty")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	exists, err := projectExists(ctx, tx, name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return domain.ErrTaskNotFound
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET project = '', updated_at = CURRENT_TIMESTAMP
+		  WHERE project = ?`,
+		name,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE name = ?`, name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (r *TaskRepository) MarkDone(ctx context.Context, ids []int64) error {
 	return r.transit(ctx, ids, domain.StatusDone)
+}
+
+func (r *TaskRepository) MarkDoing(ctx context.Context, ids []int64) error {
+	return r.transit(ctx, ids, domain.StatusDoing)
 }
 
 func (r *TaskRepository) Reopen(ctx context.Context, ids []int64) error {
@@ -150,7 +269,46 @@ func (r *TaskRepository) SoftDelete(ctx context.Context, ids []int64) error {
 }
 
 func (r *TaskRepository) Restore(ctx context.Context, ids []int64) error {
-	return r.transit(ctx, ids, domain.StatusTodo)
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, id := range ids {
+		status, err := r.statusByID(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if !domain.CanTransit(status, domain.StatusTodo) {
+			return domain.NewInvalidTransitionError(status, domain.StatusTodo)
+		}
+
+		var project string
+		if err := tx.QueryRowContext(ctx, `SELECT project FROM tasks WHERE id = ?`, id).Scan(&project); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return domain.ErrTaskNotFound
+			}
+			return err
+		}
+		target := domain.StatusTodo
+		if strings.TrimSpace(project) == "" {
+			target = domain.StatusInbox
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE tasks
+			    SET status = ?, done_at = NULL, updated_at = CURRENT_TIMESTAMP
+			  WHERE id = ?`,
+			string(target), id,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *TaskRepository) Purge(ctx context.Context, ids []int64) error {
@@ -185,6 +343,92 @@ func (r *TaskRepository) UpdateTitle(ctx context.Context, id int64, title string
 		    SET title = ?, updated_at = CURRENT_TIMESTAMP
 		  WHERE id = ?`,
 		title, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrTaskNotFound
+	}
+	return nil
+}
+
+func (r *TaskRepository) UpdateProject(ctx context.Context, id int64, project string) error {
+	if err := r.ensureProject(ctx, project); err != nil {
+		return err
+	}
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET project = ?,
+		        status = CASE
+		                    WHEN status = 'inbox' AND ? <> '' THEN 'todo'
+		                    ELSE status
+		                 END,
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE id = ?`,
+		project, project, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrTaskNotFound
+	}
+	return nil
+}
+
+func (r *TaskRepository) ensureProject(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO projects(name) VALUES (?)`, name)
+	return err
+}
+
+func ensureProjectTx(ctx context.Context, tx *sql.Tx, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO projects(name) VALUES (?)`, name)
+	return err
+}
+
+func projectExists(ctx context.Context, tx *sql.Tx, name string) (bool, error) {
+	var exists int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT CASE WHEN EXISTS(SELECT 1 FROM projects WHERE name = ?)
+		             OR EXISTS(SELECT 1 FROM tasks WHERE project = ?)
+		        THEN 1 ELSE 0 END`,
+		name, name,
+	).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists == 1, nil
+}
+
+func (r *TaskRepository) UpdateDueAt(ctx context.Context, id int64, dueAt *time.Time) error {
+	var due any
+	if dueAt != nil {
+		due = dueAt.UTC()
+	}
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET due_at = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE id = ?`,
+		due, id,
 	)
 	if err != nil {
 		return err

@@ -2,11 +2,15 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"td/internal/domain"
 	"td/internal/repo"
@@ -29,7 +33,7 @@ func TestSinglePageViewContainsHeaderFooter(t *testing.T) {
 	if !strings.Contains(view, "Today Progress") {
 		t.Fatalf("view should contain today progress, got: %q", view)
 	}
-	if !strings.Contains(view, "q quit") {
+	if !strings.Contains(ansi.Strip(view), "quit q") {
 		t.Fatalf("view should contain quit hint, got: %q", view)
 	}
 }
@@ -63,6 +67,86 @@ func TestTodayProgressUsesCurrentRuleScope(t *testing.T) {
 	}
 }
 
+func TestTodayProgressShouldUseLocalDayBoundary(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 2, 23, 23, 30, 0, 0, loc)
+	dueTomorrowLocal := time.Date(2026, 2, 24, 0, 30, 0, 0, loc)
+	task := domain.Task{
+		ID:     1,
+		Title:  "tomorrow task",
+		Status: domain.StatusTodo,
+		DueAt:  &dueTomorrowLocal,
+	}
+
+	if isTodayProgressTask(task, now) {
+		t.Fatalf("task due tomorrow local should not be counted in today's progress")
+	}
+}
+
+func TestTodayProgressShouldCountDoneAtTodayWithoutDue(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 2, 23, 18, 30, 0, 0, loc)
+	doneAt := now.Add(-45 * time.Minute)
+
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "project task", Status: domain.StatusDone, DoneAt: &doneAt},
+		},
+	}
+
+	m := NewModelWithRepo(r)
+	m.now = func() time.Time { return now }
+	m.reload()
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "1/1") {
+		t.Fatalf("today progress should include done_at-today task without due, view=%q", view)
+	}
+}
+
+func TestHeaderShouldShowBalancedMetrics(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, loc)
+	overdue := now.Add(-2 * time.Hour)
+	later := now.Add(2 * time.Hour)
+
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "doing", Status: domain.StatusDoing},
+			{ID: 2, Title: "todo-overdue", Status: domain.StatusTodo, DueAt: &overdue},
+			{ID: 3, Title: "todo-later", Status: domain.StatusTodo, DueAt: &later},
+			{ID: 4, Title: "done", Status: domain.StatusDone},
+		},
+	}
+
+	m := NewModelWithRepo(r)
+	m.now = func() time.Time { return now }
+	m.activeView = domain.ViewInbox
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 24})
+	m = updated.(Model)
+	m.reload()
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Doing: 1") {
+		t.Fatalf("header should contain Doing metric, view=%q", view)
+	}
+	if !strings.Contains(view, "Todo: 2") {
+		t.Fatalf("header should contain Todo metric, view=%q", view)
+	}
+	if !strings.Contains(view, "Done: 1") {
+		t.Fatalf("header should contain Done metric, view=%q", view)
+	}
+	if !strings.Contains(view, "Overdue: 1") {
+		t.Fatalf("header should contain Overdue metric, view=%q", view)
+	}
+	if !strings.Contains(view, "Time:") {
+		t.Fatalf("header should contain Time line, view=%q", view)
+	}
+	if !strings.Contains(view, "View: Inbox  Items: 0") {
+		t.Fatalf("header should contain View/Items line, view=%q", view)
+	}
+}
+
 func TestPressQShouldQuit(t *testing.T) {
 	m := NewModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -74,12 +158,784 @@ func TestPressQShouldQuit(t *testing.T) {
 	}
 }
 
-type fakeTaskRepo struct {
-	tasks []domain.Task
+func TestViewShouldFitWindowSize(t *testing.T) {
+	model := NewModel()
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
+	m := updated.(Model)
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > 12 {
+		t.Fatalf("view line count = %d, want <= 12", len(lines))
+	}
+
+	maxWidth := 0
+	for _, line := range lines {
+		width := ansi.StringWidth(line)
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+	if maxWidth > 60 {
+		t.Fatalf("view max line width = %d, want <= 60", maxWidth)
+	}
 }
 
-func (f *fakeTaskRepo) Create(context.Context, domain.Task) (int64, error) {
-	return 0, nil
+func TestViewShouldKeepFooterInSmallWindow(t *testing.T) {
+	model := NewModel()
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 70, Height: 12})
+	m := updated.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "ready") {
+		t.Fatalf("view should keep footer section after resize, got: %q", view)
+	}
+}
+
+func TestViewShouldFitMultipleWindowSizes(t *testing.T) {
+	cases := []struct {
+		name   string
+		width  int
+		height int
+	}{
+		{name: "large", width: 120, height: 30},
+		{name: "medium", width: 80, height: 20},
+		{name: "small", width: 60, height: 12},
+		{name: "narrow", width: 38, height: 10},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			model := NewModel()
+			updated, _ := model.Update(tea.WindowSizeMsg{Width: tt.width, Height: tt.height})
+			m := updated.(Model)
+			assertViewFits(t, m.View(), tt.width, tt.height)
+		})
+	}
+}
+
+func TestHeaderAndFooterShouldUseFullWidth(t *testing.T) {
+	model := NewModel()
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 130, Height: 24})
+	m := updated.(Model)
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) < 4 {
+		t.Fatalf("view lines too short: %d", len(lines))
+	}
+
+	headerTop := strings.TrimRight(ansi.Strip(lines[0]), " ")
+	if ansi.StringWidth(headerTop) != 130 {
+		t.Fatalf("header top visible width = %d, want 130, line=%q", ansi.StringWidth(headerTop), lines[0])
+	}
+
+	footerLine := ""
+	for _, line := range lines {
+		if strings.Contains(line, "ready") {
+			footerLine = line
+			break
+		}
+	}
+	if footerLine == "" {
+		t.Fatalf("footer line not found, view=%q", view)
+	}
+	trimmed := strings.TrimRight(ansi.Strip(footerLine), " ")
+	if ansi.StringWidth(trimmed) != 130 {
+		t.Fatalf("footer visible width = %d, want 130, line=%q", ansi.StringWidth(trimmed), footerLine)
+	}
+}
+
+func TestBodyShouldNotUseHardVerticalSeparator(t *testing.T) {
+	model := NewModel()
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 110, Height: 24})
+	m := updated.(Model)
+	view := m.View()
+
+	separatorPattern := regexp.MustCompile(`\s{6,}\|\s{6,}`)
+	if separatorPattern.MatchString(view) {
+		t.Fatalf("body should not contain hard separator column, view=%q", view)
+	}
+}
+
+func TestFocusIndicatorShouldOnlyAppearInFooter(t *testing.T) {
+	model := NewModel()
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m := updated.(Model)
+	view := m.View()
+	plain := ansi.Strip(view)
+
+	if strings.Contains(plain, "focus: nav") || strings.Contains(plain, "focus: list") {
+		t.Fatalf("focus indicator should not stay inside panes, view=%q", view)
+	}
+	if !strings.Contains(plain, "focus nav") {
+		t.Fatalf("focus indicator should appear in footer, view=%q", view)
+	}
+}
+
+func TestViewShouldNotShowTruncationArtifactsInNormalWidth(t *testing.T) {
+	model := NewModel()
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m := updated.(Model)
+	view := m.View()
+	if strings.Contains(view, "...") {
+		t.Fatalf("view should not contain truncation artifacts at normal width, view=%q", view)
+	}
+}
+
+func TestFooterShouldOnlyShowInputPromptInInputMode(t *testing.T) {
+	m := NewModel()
+	m = sendRunes(m, 'a')
+	m = sendText(m, "draft")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "add> draft") {
+		t.Fatalf("input prompt should be visible in footer, view=%q", view)
+	}
+	if strings.Contains(view, "quit q") || strings.Contains(view, "help ?") {
+		t.Fatalf("footer shortcuts should be hidden in input mode, view=%q", view)
+	}
+}
+
+func TestFooterShouldRestoreShortcutsAfterInputEnd(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+
+	m = sendRunes(m, 'a')
+	m = sendText(m, "one")
+	m = sendEnter(m)
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "quit q") || !strings.Contains(view, "help ?") {
+		t.Fatalf("footer shortcuts should be restored after input submit, view=%q", view)
+	}
+	if strings.Contains(view, "j/k move") {
+		t.Fatalf("footer should not show full shortcut list in normal mode, view=%q", view)
+	}
+}
+
+func TestTrashFooterShouldShowRestoreAndPurgeHints(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "trash a", Status: domain.StatusDeleted},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewTrash
+	m.reload()
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "restore r") || !strings.Contains(view, "purge X") {
+		t.Fatalf("trash footer should contain restore/purge hints, view=%q", view)
+	}
+}
+
+func TestNonTrashFooterShouldHideRestoreAndPurgeHints(t *testing.T) {
+	m := NewModel()
+	view := ansi.Strip(m.View())
+	if strings.Contains(view, "restore r") || strings.Contains(view, "purge X") {
+		t.Fatalf("non-trash footer should not contain restore/purge hints, view=%q", view)
+	}
+}
+
+func TestHelpModalShouldToggleByQuestionMark(t *testing.T) {
+	m := NewModel()
+	m = sendRunes(m, '?')
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "HELP") {
+		t.Fatalf("help modal title should be visible, view=%q", view)
+	}
+	if !strings.Contains(view, "press ? / q / esc to close") {
+		t.Fatalf("help modal close hint should be visible, view=%q", view)
+	}
+
+	m = sendRunes(m, '?')
+	view = ansi.Strip(m.View())
+	if strings.Contains(view, "HELP") {
+		t.Fatalf("help modal should close after pressing ?, view=%q", view)
+	}
+}
+
+func TestHelpModalShouldCloseByQWithoutQuit(t *testing.T) {
+	m := NewModel()
+	m = sendRunes(m, '?')
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil {
+		t.Fatalf("pressing q in help mode should not quit app")
+	}
+	m = updated.(Model)
+	if m.showHelp {
+		t.Fatalf("help modal should be closed by q")
+	}
+}
+
+func TestUIAddTaskByInputMode(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+
+	m = sendRunes(m, 'a')
+	m = sendText(m, "write report")
+	m = sendEnter(m)
+
+	if len(r.tasks) != 1 {
+		t.Fatalf("task count = %d, want 1", len(r.tasks))
+	}
+	if r.tasks[0].Title != "write report" {
+		t.Fatalf("title = %q, want %q", r.tasks[0].Title, "write report")
+	}
+}
+
+func TestUIAddTaskInTodayShouldBeDoing(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewToday
+	m.reload()
+
+	m = sendRunes(m, 'a')
+	m = sendText(m, "today task")
+	m = sendEnter(m)
+
+	if len(r.tasks) != 1 {
+		t.Fatalf("task count = %d, want 1", len(r.tasks))
+	}
+	if r.tasks[0].Status != domain.StatusDoing {
+		t.Fatalf("status = %s, want %s", r.tasks[0].Status, domain.StatusDoing)
+	}
+}
+
+func TestUIEditProjectTodayDueAndDelete(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+
+	m = sendTab(m)
+
+	m = sendRunes(m, 'e')
+	m = sendText(m, "task updated")
+	m = sendEnter(m)
+	if r.tasks[0].Title != "task updated" {
+		t.Fatalf("title = %q, want %q", r.tasks[0].Title, "task updated")
+	}
+
+	m = sendRunes(m, 'P')
+	m = sendText(m, "work")
+	m = sendEnter(m)
+	if r.tasks[0].Project != "work" {
+		t.Fatalf("project = %q, want %q", r.tasks[0].Project, "work")
+	}
+
+	m = sendRunes(m, 'd')
+	m = sendText(m, "2026-02-25 18:00")
+	m = sendEnter(m)
+	if r.tasks[0].DueAt == nil {
+		t.Fatalf("due_at should not be nil")
+	}
+
+	m = sendRunes(m, 't')
+	if r.tasks[0].Status != domain.StatusDoing {
+		t.Fatalf("status = %s, want %s", r.tasks[0].Status, domain.StatusDoing)
+	}
+}
+
+func TestInputShouldAcceptSpaceKeyForDue(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'd')
+	m = sendText(m, "2026-02-25")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(Model)
+	m = sendText(m, "18:00")
+	m = sendEnter(m)
+
+	if r.tasks[0].DueAt == nil {
+		t.Fatalf("due_at should not be nil after typing with space key, input=%q status=%q", m.inputValue, m.statusMsg)
+	}
+}
+
+func TestInputShouldAcceptCompactDateTimeForDue(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'd')
+	m = sendText(m, "202602051122")
+	m = sendEnter(m)
+
+	if r.tasks[0].DueAt == nil {
+		t.Fatalf("due_at should not be nil after compact datetime input")
+	}
+	want := time.Date(2026, 2, 5, 11, 22, 0, 0, time.Local).UTC()
+	if !r.tasks[0].DueAt.Equal(want) {
+		t.Fatalf("due_at = %s, want %s", r.tasks[0].DueAt.UTC(), want)
+	}
+}
+
+func TestUIDeleteTask(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'x')
+	if r.tasks[0].Status != domain.StatusDeleted {
+		t.Fatalf("status = %s, want %s", r.tasks[0].Status, domain.StatusDeleted)
+	}
+	if !strings.Contains(m.statusMsg, "z undo") {
+		t.Fatalf("status message should hint z undo, got %q", m.statusMsg)
+	}
+}
+
+func TestUIDeleteTaskShouldUndoByZ(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'x')
+	if r.tasks[0].Status != domain.StatusDeleted {
+		t.Fatalf("status after delete = %s, want %s", r.tasks[0].Status, domain.StatusDeleted)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusTodo {
+		t.Fatalf("status after undo = %s, want %s", r.tasks[0].Status, domain.StatusTodo)
+	}
+}
+
+func TestTrashViewShouldShowProjectInTaskRow(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "trash a", Status: domain.StatusDeleted, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewTrash
+	m.reload()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = updated.(Model)
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "proj:work") {
+		t.Fatalf("trash row should contain project, view=%q", view)
+	}
+}
+
+func TestTrashShouldRestoreSelectedByR(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "trash a", Status: domain.StatusDeleted},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewTrash
+	m.reload()
+	m = sendTab(m)
+	m = sendRunes(m, 'r')
+
+	if r.tasks[0].Status != domain.StatusTodo {
+		t.Fatalf("status after restore = %s, want %s", r.tasks[0].Status, domain.StatusTodo)
+	}
+}
+
+func TestTrashShouldPurgeAllByUpperX(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "trash a", Status: domain.StatusDeleted},
+			{ID: 2, Title: "trash b", Status: domain.StatusDeleted},
+			{ID: 3, Title: "todo a", Status: domain.StatusTodo},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewTrash
+	m.reload()
+	m = sendRunes(m, 'X')
+
+	if len(r.tasks) != 1 {
+		t.Fatalf("task count after purge = %d, want 1", len(r.tasks))
+	}
+	if r.tasks[0].Status != domain.StatusTodo {
+		t.Fatalf("remaining task status = %s, want %s", r.tasks[0].Status, domain.StatusTodo)
+	}
+}
+
+func TestProjectViewToggleDoneByH(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.Local)
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "todo in work", Status: domain.StatusTodo, Project: "work"},
+			{ID: 2, Title: "done in work", Status: domain.StatusDone, Project: "work", DoneAt: &now},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewProject
+	m.project = "work"
+	m.reload()
+	before := ansi.Strip(m.View())
+	if strings.Contains(before, "done in work") {
+		t.Fatalf("before toggle should hide done task, view=%q", before)
+	}
+	m = sendRunes(m, 'h')
+	after := ansi.Strip(m.View())
+	if !strings.Contains(after, "done in work") {
+		t.Fatalf("after toggle should show done task, view=%q", after)
+	}
+}
+
+func TestListShouldShowDueInTaskRow(t *testing.T) {
+	due := time.Date(2026, 2, 24, 9, 30, 0, 0, time.Local)
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "with due", Status: domain.StatusInbox, DueAt: &due},
+		},
+	}
+	m := NewModelWithRepo(r)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = updated.(Model)
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "2026-02-24 09:30") {
+		t.Fatalf("task row should contain due text, view=%q", view)
+	}
+}
+
+func TestTodayViewTaskRowShouldShowProjectAndDue(t *testing.T) {
+	due := time.Date(2026, 2, 24, 9, 30, 0, 0, time.Local)
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "today task", Status: domain.StatusDoing, Project: "work", DueAt: &due},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewToday
+	m.reload()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = updated.(Model)
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "proj:work") {
+		t.Fatalf("today row should contain project text, view=%q", view)
+	}
+	if !strings.Contains(view, "due:2026-02-24 09:30") {
+		t.Fatalf("today row should contain due text, view=%q", view)
+	}
+}
+
+func TestProjectAddKeyInNavShouldCreateProject(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'a')
+	m = sendText(m, "home")
+	m = sendEnter(m)
+	if !containsString(r.projects, "home") {
+		t.Fatalf("projects = %v, want contains home", r.projects)
+	}
+}
+
+func TestProjectRenameAndDeleteByNavKeys(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'e')
+	for i := 0; i < len("work"); i++ {
+		m = sendBackspace(m)
+	}
+	m = sendText(m, "office")
+	m = sendEnter(m)
+	if !containsString(r.projects, "office") || containsString(r.projects, "work") {
+		t.Fatalf("projects after rename = %v, want contains office and no work", r.projects)
+	}
+	if r.tasks[0].Project != "office" {
+		t.Fatalf("task project after rename = %q, want %q", r.tasks[0].Project, "office")
+	}
+
+	m = sendRunes(m, 'x')
+	if containsString(r.projects, "office") {
+		t.Fatalf("projects after delete = %v, should not contain office", r.projects)
+	}
+	if r.tasks[0].Project != "" {
+		t.Fatalf("task project after delete = %q, want empty", r.tasks[0].Project)
+	}
+	if !strings.Contains(m.statusMsg, "z undo") {
+		t.Fatalf("status message should hint z undo, got %q", m.statusMsg)
+	}
+}
+
+func TestProjectDeleteShouldUndoByZ(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'x')
+	if containsString(r.projects, "work") {
+		t.Fatalf("project should be deleted, projects=%v", r.projects)
+	}
+	if r.tasks[0].Project != "" {
+		t.Fatalf("task project after delete = %q, want empty", r.tasks[0].Project)
+	}
+
+	m = sendRunes(m, 'z')
+	if !containsString(r.projects, "work") {
+		t.Fatalf("project should be restored, projects=%v", r.projects)
+	}
+	if r.tasks[0].Project != "work" {
+		t.Fatalf("task project after undo = %q, want %q", r.tasks[0].Project, "work")
+	}
+}
+
+func TestUndoShouldSupportMultipleStepsForTaskDelete(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+			{ID: 2, Title: "task b", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+
+	m = sendRunes(m, 'x')
+	m = sendRunes(m, 'x')
+	if r.tasks[0].Status != domain.StatusDeleted || r.tasks[1].Status != domain.StatusDeleted {
+		t.Fatalf("after double delete statuses = %s/%s, want deleted/deleted", r.tasks[0].Status, r.tasks[1].Status)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusDeleted || r.tasks[1].Status != domain.StatusTodo {
+		t.Fatalf("after first undo statuses = %s/%s, want deleted/todo", r.tasks[0].Status, r.tasks[1].Status)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusTodo || r.tasks[1].Status != domain.StatusTodo {
+		t.Fatalf("after second undo statuses = %s/%s, want todo/todo", r.tasks[0].Status, r.tasks[1].Status)
+	}
+}
+
+func TestLogViewShouldShowProjectAndDoneAt(t *testing.T) {
+	now := time.Date(2026, 2, 23, 20, 0, 0, 0, time.Local)
+	doneAt := now.Add(-30 * time.Minute)
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "测试用例", Status: domain.StatusDone, Project: "xxx", DoneAt: &doneAt},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.now = func() time.Time { return now }
+	m.activeView = domain.ViewLog
+	m.reload()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = updated.(Model)
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "proj:xxx") {
+		t.Fatalf("log row should contain project, view=%q", view)
+	}
+	if !strings.Contains(view, "done:2026-02-23 19:30") {
+		t.Fatalf("log row should contain done time, view=%q", view)
+	}
+}
+
+func TestTaskShouldMarkDoneByCInListFocus(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'c')
+	if r.tasks[0].Status != domain.StatusDone {
+		t.Fatalf("status = %s, want %s", r.tasks[0].Status, domain.StatusDone)
+	}
+}
+
+func TestTodayToggleByTShouldSwitchDoingAndTodo(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "doing task", Status: domain.StatusDoing, Project: "work"},
+			{ID: 2, Title: "todo task", Status: domain.StatusTodo, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewProject
+	m.project = "work"
+	m.reload()
+	m = sendTab(m)
+
+	m = sendRunes(m, 't')
+	if r.tasks[0].Status != domain.StatusTodo {
+		t.Fatalf("doing task status after t = %s, want %s, statusMsg=%q focus=%v listLen=%d", r.tasks[0].Status, domain.StatusTodo, m.statusMsg, m.focus, len(m.tasks))
+	}
+
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 't')
+	if r.tasks[1].Status != domain.StatusDoing {
+		t.Fatalf("todo task status after t = %s, want %s, statusMsg=%q focus=%v listLen=%d", r.tasks[1].Status, domain.StatusDoing, m.statusMsg, m.focus, len(m.tasks))
+	}
+}
+
+func TestProjectShouldMarkAllOpenTasksDoneByCInNav(t *testing.T) {
+	now := time.Date(2026, 2, 23, 20, 0, 0, 0, time.Local)
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "a", Status: domain.StatusInbox, Project: "work"},
+			{ID: 2, Title: "b", Status: domain.StatusTodo, Project: "work"},
+			{ID: 3, Title: "c", Status: domain.StatusDoing, Project: "work"},
+			{ID: 4, Title: "d", Status: domain.StatusDone, Project: "work", DoneAt: &now},
+			{ID: 5, Title: "e", Status: domain.StatusTodo, Project: "home"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'c')
+
+	if r.tasks[0].Status != domain.StatusDone || r.tasks[1].Status != domain.StatusDone || r.tasks[2].Status != domain.StatusDone {
+		t.Fatalf("work open tasks should be done, got statuses: %s %s %s", r.tasks[0].Status, r.tasks[1].Status, r.tasks[2].Status)
+	}
+	if r.tasks[3].Status != domain.StatusDone {
+		t.Fatalf("already done task should stay done, got %s", r.tasks[3].Status)
+	}
+	if r.tasks[4].Status != domain.StatusTodo {
+		t.Fatalf("other project task should stay todo, got %s", r.tasks[4].Status)
+	}
+}
+
+func TestLongTaskListShouldKeepFooterAndSelectedVisible(t *testing.T) {
+	tasks := make([]domain.Task, 0, 80)
+	for i := 1; i <= 80; i++ {
+		tasks = append(tasks, domain.Task{
+			ID:     int64(i),
+			Title:  "task-" + fmt.Sprintf("%02d", i) + strings.Repeat("-very-long-title", 3),
+			Status: domain.StatusInbox,
+		})
+	}
+	r := &fakeTaskRepo{tasks: tasks}
+	m := NewModelWithRepo(r)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 16})
+	m = updated.(Model)
+	m = sendTab(m)
+	for i := 0; i < 35; i++ {
+		m = sendRunes(m, 'j')
+	}
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "ready") {
+		t.Fatalf("footer should stay visible with long list, view=%q", view)
+	}
+	if !selectedLineContains(view, "task-36") {
+		t.Fatalf("selected task should stay in visible window, view=%q", view)
+	}
+}
+
+func TestLongProjectNavShouldKeepFooterAndSelectedVisible(t *testing.T) {
+	projects := make([]string, 0, 50)
+	for i := 1; i <= 50; i++ {
+		projects = append(projects, fmt.Sprintf("proj-%02d", i))
+	}
+	r := &fakeTaskRepo{projects: projects}
+	m := NewModelWithRepo(r)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 16})
+	m = updated.(Model)
+	for i := 0; i < 35; i++ {
+		m = sendRunes(m, 'j')
+	}
+	row, ok := m.currentNavRow()
+	if !ok {
+		t.Fatalf("current nav row should exist")
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "ready") {
+		t.Fatalf("footer should stay visible with long nav, view=%q", view)
+	}
+	if !selectedLineContains(view, row.Label) {
+		t.Fatalf("selected nav row should stay in visible window, want=%q view=%q", row.Label, view)
+	}
+}
+
+func assertViewFits(t *testing.T, view string, width, height int) {
+	t.Helper()
+	lines := strings.Split(view, "\n")
+	if len(lines) > height {
+		t.Fatalf("view line count = %d, want <= %d", len(lines), height)
+	}
+
+	maxWidth := 0
+	for _, line := range lines {
+		w := ansi.StringWidth(line)
+		if w > maxWidth {
+			maxWidth = w
+		}
+	}
+	if maxWidth > width {
+		t.Fatalf("view max line width = %d, want <= %d", maxWidth, width)
+	}
+}
+
+type fakeTaskRepo struct {
+	tasks    []domain.Task
+	nextID   int64
+	nowFunc  func() time.Time
+	projects []string
+}
+
+func (f *fakeTaskRepo) Create(_ context.Context, task domain.Task) (int64, error) {
+	if f.nextID <= 0 {
+		f.nextID = 1
+		for _, item := range f.tasks {
+			if item.ID >= f.nextID {
+				f.nextID = item.ID + 1
+			}
+		}
+	}
+	task.ID = f.nextID
+	f.nextID++
+	if task.Status == "" {
+		task.Status = domain.StatusInbox
+	}
+	now := time.Now().UTC()
+	if f.nowFunc != nil {
+		now = f.nowFunc().UTC()
+	}
+	task.CreatedAt = now
+	task.UpdatedAt = now
+	f.tasks = append(f.tasks, task)
+	return task.ID, nil
 }
 
 func (f *fakeTaskRepo) GetByID(_ context.Context, id int64) (domain.Task, error) {
@@ -91,15 +947,218 @@ func (f *fakeTaskRepo) GetByID(_ context.Context, id int64) (domain.Task, error)
 	return domain.Task{}, domain.ErrTaskNotFound
 }
 
-func (f *fakeTaskRepo) List(_ context.Context, _ repo.TaskListFilter) ([]domain.Task, error) {
+func (f *fakeTaskRepo) List(_ context.Context, filter repo.TaskListFilter) ([]domain.Task, error) {
 	out := make([]domain.Task, 0, len(f.tasks))
-	out = append(out, f.tasks...)
+	for _, task := range f.tasks {
+		if filter.Project != "" && task.Project != filter.Project {
+			continue
+		}
+		out = append(out, task)
+	}
 	return out, nil
 }
 
-func (f *fakeTaskRepo) UpdateTitle(context.Context, int64, string) error { return nil }
-func (f *fakeTaskRepo) MarkDone(context.Context, []int64) error          { return nil }
-func (f *fakeTaskRepo) Reopen(context.Context, []int64) error            { return nil }
-func (f *fakeTaskRepo) SoftDelete(context.Context, []int64) error        { return nil }
-func (f *fakeTaskRepo) Restore(context.Context, []int64) error           { return nil }
-func (f *fakeTaskRepo) Purge(context.Context, []int64) error             { return nil }
+func (f *fakeTaskRepo) CreateProject(_ context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if !containsString(f.projects, name) {
+		f.projects = append(f.projects, name)
+		sort.Strings(f.projects)
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) ListProjects(context.Context) ([]string, error) {
+	out := make([]string, 0, len(f.projects))
+	out = append(out, f.projects...)
+	sort.Strings(out)
+	return out, nil
+}
+
+func (f *fakeTaskRepo) RenameProject(_ context.Context, oldName, newName string) error {
+	oldName = strings.TrimSpace(oldName)
+	newName = strings.TrimSpace(newName)
+	for i, name := range f.projects {
+		if name == oldName {
+			f.projects[i] = newName
+		}
+	}
+	for i := range f.tasks {
+		if f.tasks[i].Project == oldName {
+			f.tasks[i].Project = newName
+		}
+	}
+	sort.Strings(f.projects)
+	return nil
+}
+
+func (f *fakeTaskRepo) DeleteProject(_ context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	out := make([]string, 0, len(f.projects))
+	for _, item := range f.projects {
+		if item == name {
+			continue
+		}
+		out = append(out, item)
+	}
+	f.projects = out
+	for i := range f.tasks {
+		if f.tasks[i].Project == name {
+			f.tasks[i].Project = ""
+		}
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) UpdateTitle(_ context.Context, id int64, title string) error {
+	for i := range f.tasks {
+		if f.tasks[i].ID == id {
+			f.tasks[i].Title = title
+			return nil
+		}
+	}
+	return domain.ErrTaskNotFound
+}
+
+func (f *fakeTaskRepo) UpdateProject(_ context.Context, id int64, project string) error {
+	for i := range f.tasks {
+		if f.tasks[i].ID == id {
+			f.tasks[i].Project = project
+			if project != "" && !containsString(f.projects, project) {
+				f.projects = append(f.projects, project)
+				sort.Strings(f.projects)
+			}
+			return nil
+		}
+	}
+	return domain.ErrTaskNotFound
+}
+
+func (f *fakeTaskRepo) UpdateDueAt(_ context.Context, id int64, dueAt *time.Time) error {
+	for i := range f.tasks {
+		if f.tasks[i].ID == id {
+			f.tasks[i].DueAt = dueAt
+			return nil
+		}
+	}
+	return domain.ErrTaskNotFound
+}
+
+func (f *fakeTaskRepo) MarkDone(_ context.Context, ids []int64) error {
+	for _, id := range ids {
+		for i := range f.tasks {
+			if f.tasks[i].ID == id {
+				f.tasks[i].Status = domain.StatusDone
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) MarkDoing(_ context.Context, ids []int64) error {
+	for _, id := range ids {
+		for i := range f.tasks {
+			if f.tasks[i].ID == id {
+				f.tasks[i].Status = domain.StatusDoing
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) Reopen(_ context.Context, ids []int64) error {
+	for _, id := range ids {
+		for i := range f.tasks {
+			if f.tasks[i].ID == id {
+				f.tasks[i].Status = domain.StatusTodo
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) SoftDelete(_ context.Context, ids []int64) error {
+	for _, id := range ids {
+		for i := range f.tasks {
+			if f.tasks[i].ID == id {
+				f.tasks[i].Status = domain.StatusDeleted
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) Restore(_ context.Context, ids []int64) error {
+	for _, id := range ids {
+		for i := range f.tasks {
+			if f.tasks[i].ID == id {
+				f.tasks[i].Status = domain.StatusTodo
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeTaskRepo) Purge(_ context.Context, ids []int64) error {
+	drop := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		drop[id] = struct{}{}
+	}
+	out := make([]domain.Task, 0, len(f.tasks))
+	for _, task := range f.tasks {
+		if _, ok := drop[task.ID]; ok {
+			continue
+		}
+		out = append(out, task)
+	}
+	f.tasks = out
+	return nil
+}
+
+func sendRunes(m Model, r ...rune) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: r})
+	return updated.(Model)
+}
+
+func sendText(m Model, text string) Model {
+	for _, r := range text {
+		m = sendRunes(m, r)
+	}
+	return m
+}
+
+func sendEnter(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	return updated.(Model)
+}
+
+func sendTab(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	return updated.(Model)
+}
+
+func sendBackspace(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	return updated.(Model)
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+func selectedLineContains(view, target string) bool {
+	lines := strings.Split(view, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, target) && strings.Contains(line, "> ") {
+			return true
+		}
+	}
+	return false
+}

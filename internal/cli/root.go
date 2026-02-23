@@ -15,11 +15,14 @@ func NewRootCmd(cfg config.Config) *cobra.Command {
 		Use: "td",
 	}
 	cmd.AddCommand(newAddCmd(cfg))
+	cmd.AddCommand(newProjectCmd(cfg))
 	cmd.AddCommand(newLsCmd(cfg))
 	cmd.AddCommand(newShowCmd(cfg))
 	cmd.AddCommand(newDoneCmd(cfg))
 	cmd.AddCommand(newReopenCmd(cfg))
 	cmd.AddCommand(newEditCmd(cfg))
+	cmd.AddCommand(newTodayCmd(cfg))
+	cmd.AddCommand(newDueCmd(cfg))
 	cmd.AddCommand(newRmCmd(cfg))
 	cmd.AddCommand(newRestoreCmd(cfg))
 	cmd.AddCommand(newPurgeCmd(cfg))

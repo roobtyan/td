@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"td/internal/clipboard"
 	"td/internal/domain"
@@ -16,6 +17,7 @@ type AddFromClipboardUseCase struct {
 	AIParser      *AIParseTaskUseCase
 	Project       string
 	Priority      string
+	DueAt         *time.Time
 }
 
 func (u AddFromClipboardUseCase) AddFromClipboard(ctx context.Context, text string, useAI bool) (domain.Task, error) {
@@ -53,12 +55,17 @@ func (u AddFromClipboardUseCase) AddFromClipboard(ctx context.Context, text stri
 	if project == "" {
 		project = parsed.Project
 	}
+	status := domain.StatusInbox
+	if project != "" {
+		status = domain.StatusTodo
+	}
 	id, err := u.Repo.Create(ctx, domain.Task{
 		Title:    parsed.Title,
 		Notes:    parsed.Notes,
-		Status:   domain.StatusInbox,
+		Status:   status,
 		Project:  project,
 		Priority: priority,
+		DueAt:    u.DueAt,
 	})
 	if err != nil {
 		return domain.Task{}, err

@@ -3,29 +3,31 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	pageBackground = lipgloss.Color("#101923")
-	panelBorder    = lipgloss.Color("#2A3B4D")
-	focusColor     = lipgloss.Color("#4FD1C5")
-	accentColor    = lipgloss.Color("#7DD3FC")
-	warnColor      = lipgloss.Color("#FBBF24")
-	okColor        = lipgloss.Color("#34D399")
-	mutedColor     = lipgloss.Color("#93A1B0")
+	pageBackground  = lipgloss.Color("#101923")
+	panelBorder     = lipgloss.Color("#2A3B4D")
+	focusColor      = lipgloss.Color("#3FB8B3")
+	accentColor     = lipgloss.Color("#96B9D8")
+	warnColor       = lipgloss.Color("#FBBF24")
+	okColor         = lipgloss.Color("#34D399")
+	mutedColor      = lipgloss.Color("#93A1B0")
+	headerTextColor = lipgloss.Color("#D9E2EC")
+	logoTextColor   = headerTextColor
 )
 
 var (
 	headerBoxStyle = lipgloss.NewStyle().
 			Background(pageBackground).
-			Foreground(lipgloss.Color("#D9E2EC")).
+			Foreground(headerTextColor).
 			Border(lipgloss.NormalBorder()).
 			BorderForeground(panelBorder).
 			Padding(0, 1)
 
 	headerInfoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D9E2EC")).
+			Foreground(headerTextColor).
 			Bold(true)
 
 	logoStyle = lipgloss.NewStyle().
-			Foreground(accentColor).
+			Foreground(logoTextColor).
 			Bold(true)
 
 	navBoxStyle = lipgloss.NewStyle().
@@ -50,11 +52,18 @@ var (
 	footerStatusStyle = lipgloss.NewStyle().
 				Foreground(okColor)
 
+	footerFocusStyle = lipgloss.NewStyle().
+				Foreground(headerTextColor)
+
 	footerHintStyle = lipgloss.NewStyle().
 			Foreground(mutedColor)
 
+	footerTokenStyle = lipgloss.NewStyle().
+				Foreground(okColor).
+				Bold(true)
+
 	navTitleStyle = lipgloss.NewStyle().
-			Foreground(accentColor).
+			Foreground(headerTextColor).
 			Bold(true)
 
 	navSelectedStyle = lipgloss.NewStyle().
@@ -66,7 +75,7 @@ var (
 			Foreground(okColor)
 
 	listTitleStyle = lipgloss.NewStyle().
-			Foreground(accentColor).
+			Foreground(headerTextColor).
 			Bold(true)
 
 	listRowStyle = lipgloss.NewStyle().
@@ -76,6 +85,32 @@ var (
 				Foreground(lipgloss.Color("#F8FAFC")).
 				Background(lipgloss.Color("#1F3142")).
 				Bold(true)
+
+	helpBackdropLineStyle = lipgloss.NewStyle().
+				Foreground(mutedColor).
+				Background(pageBackground)
+
+	helpModalBoxStyle = lipgloss.NewStyle().
+				Background(pageBackground).
+				Foreground(headerTextColor).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(focusColor).
+				Padding(0, 1)
+
+	helpTitleStyle = lipgloss.NewStyle().
+			Foreground(okColor).
+			Bold(true)
+
+	helpSectionStyle = lipgloss.NewStyle().
+				Foreground(accentColor).
+				Bold(true)
+
+	helpKeyStyle = lipgloss.NewStyle().
+			Foreground(headerTextColor).
+			Bold(true)
+
+	helpHintStyle = lipgloss.NewStyle().
+			Foreground(mutedColor)
 
 	statusInboxStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#CBD5E1"))
 	statusTodoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA"))

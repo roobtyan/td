@@ -30,7 +30,7 @@ func TestTodayView(t *testing.T) {
 	repo := sqlite.NewTaskRepository(db)
 	uc := NewNavQueryUseCase(repo)
 
-	tasks, err := uc.ListByView(context.Background(), domain.ViewToday, now, "")
+	tasks, err := uc.ListByView(context.Background(), domain.ViewToday, now, "", false)
 	if err != nil {
 		t.Fatalf("list today: %v", err)
 	}
@@ -41,6 +41,109 @@ func TestTodayView(t *testing.T) {
 	assertNotContains(t, got, "todo-future")
 	assertNotContains(t, got, "inbox-today")
 	assertNotContains(t, got, "done-overdue")
+}
+
+func TestProjectViewShowDoneToggle(t *testing.T) {
+	db := openNavTestDB(t)
+	defer db.Close()
+	if err := sqlite.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	seedNavTask(t, db, "work-inbox", domain.StatusInbox, "work", nil, nil)
+	seedNavTask(t, db, "work-doing", domain.StatusDoing, "work", nil, nil)
+	seedNavTask(t, db, "work-done", domain.StatusDone, "work", nil, ptrTime(now))
+	seedNavTask(t, db, "home-todo", domain.StatusTodo, "home", nil, nil)
+
+	repo := sqlite.NewTaskRepository(db)
+	uc := NewNavQueryUseCase(repo)
+
+	hiddenDone, err := uc.ListByView(context.Background(), domain.ViewProject, now, "work", false)
+	if err != nil {
+		t.Fatalf("list project hidden done: %v", err)
+	}
+	gotHidden := titles(hiddenDone)
+	assertContains(t, gotHidden, "work-inbox")
+	assertContains(t, gotHidden, "work-doing")
+	assertNotContains(t, gotHidden, "work-done")
+
+	withDone, err := uc.ListByView(context.Background(), domain.ViewProject, now, "work", true)
+	if err != nil {
+		t.Fatalf("list project with done: %v", err)
+	}
+	gotAll := titles(withDone)
+	assertContains(t, gotAll, "work-inbox")
+	assertContains(t, gotAll, "work-doing")
+	assertContains(t, gotAll, "work-done")
+	assertNotContains(t, gotAll, "home-todo")
+}
+
+func TestLogViewShouldSortByLatestDoneAt(t *testing.T) {
+	db := openNavTestDB(t)
+	defer db.Close()
+	if err := sqlite.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	seedNavTask(t, db, "done-old", domain.StatusDone, "work", nil, ptrTime(now.Add(-3*time.Hour)))
+	seedNavTask(t, db, "done-latest", domain.StatusDone, "work", nil, ptrTime(now.Add(-30*time.Minute)))
+	seedNavTask(t, db, "done-middle", domain.StatusDone, "work", nil, ptrTime(now.Add(-90*time.Minute)))
+
+	repo := sqlite.NewTaskRepository(db)
+	uc := NewNavQueryUseCase(repo)
+
+	tasks, err := uc.ListByView(context.Background(), domain.ViewLog, now, "", false)
+	if err != nil {
+		t.Fatalf("list log: %v", err)
+	}
+	got := titles(tasks)
+	want := []string{"done-latest", "done-middle", "done-old"}
+	if len(got) != len(want) {
+		t.Fatalf("log size = %d, want %d, got=%v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("log order mismatch at %d, got=%v want=%v", i, got, want)
+		}
+	}
+}
+
+func TestTrashViewShouldSortByLatestDeletedAt(t *testing.T) {
+	db := openNavTestDB(t)
+	defer db.Close()
+	if err := sqlite.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	seedNavTask(t, db, "trash-old", domain.StatusDeleted, "work", nil, nil)
+	seedNavTask(t, db, "trash-latest", domain.StatusDeleted, "work", nil, nil)
+	seedNavTask(t, db, "trash-middle", domain.StatusDeleted, "work", nil, nil)
+	seedNavTask(t, db, "not-trash", domain.StatusTodo, "work", nil, nil)
+
+	setNavTaskUpdatedAtByTitle(t, db, "trash-old", now.Add(-3*time.Hour))
+	setNavTaskUpdatedAtByTitle(t, db, "trash-latest", now.Add(-30*time.Minute))
+	setNavTaskUpdatedAtByTitle(t, db, "trash-middle", now.Add(-90*time.Minute))
+
+	repo := sqlite.NewTaskRepository(db)
+	uc := NewNavQueryUseCase(repo)
+
+	tasks, err := uc.ListByView(context.Background(), domain.ViewTrash, now, "", false)
+	if err != nil {
+		t.Fatalf("list trash: %v", err)
+	}
+	got := titles(tasks)
+	want := []string{"trash-latest", "trash-middle", "trash-old"}
+	if len(got) != len(want) {
+		t.Fatalf("trash size = %d, want %d, got=%v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("trash order mismatch at %d, got=%v want=%v", i, got, want)
+		}
+	}
 }
 
 func openNavTestDB(t *testing.T) *sql.DB {
@@ -69,6 +172,14 @@ func seedNavTask(t *testing.T, db *sql.DB, title string, status domain.Status, p
 	)
 	if err != nil {
 		t.Fatalf("seed task %q: %v", title, err)
+	}
+}
+
+func setNavTaskUpdatedAtByTitle(t *testing.T, db *sql.DB, title string, updatedAt time.Time) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE tasks SET updated_at = ? WHERE title = ?`, updatedAt, title)
+	if err != nil {
+		t.Fatalf("set updated_at for %q: %v", title, err)
 	}
 }
 

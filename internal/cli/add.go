@@ -2,6 +2,7 @@ package cli
 
 import (
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +16,7 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 		priority string
 		fromClip bool
 		useAI    bool
+		dueRaw   string
 	)
 
 	cmd := &cobra.Command{
@@ -33,6 +35,15 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 			}
 			defer closeDB(closer)
 
+			var dueAt *time.Time
+			if strings.TrimSpace(dueRaw) != "" {
+				parsed, err := parseDueInput(dueRaw, time.Local)
+				if err != nil {
+					return err
+				}
+				dueAt = &parsed
+			}
+
 			var taskTitle string
 			var taskID int64
 			if fromClip {
@@ -45,6 +56,7 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 					AIParser: aiParser,
 					Project:  project,
 					Priority: priority,
+					DueAt:    dueAt,
 				}
 				clipText := strings.Join(args, " ")
 				task, err := uc.AddFromClipboard(cmd.Context(), clipText, useAI)
@@ -59,6 +71,7 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 					Title:    strings.Join(args, " "),
 					Project:  project,
 					Priority: priority,
+					DueAt:    dueAt,
 				})
 				if err != nil {
 					return err
@@ -74,6 +87,7 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 
 	cmd.Flags().StringVarP(&project, "project", "p", "", "project")
 	cmd.Flags().StringVarP(&priority, "priority", "P", "P2", "priority")
+	cmd.Flags().StringVar(&dueRaw, "due", "", "due datetime, supports YYYY-MM-DD or YYYY-MM-DD HH:MM")
 	cmd.Flags().BoolVar(&fromClip, "clip", false, "create from clipboard")
 	cmd.Flags().BoolVar(&useAI, "ai", false, "parse clipboard with AI and fallback to rules")
 	return cmd

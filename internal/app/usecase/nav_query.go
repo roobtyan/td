@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"td/internal/domain"
@@ -20,7 +21,7 @@ func NewNavQueryUseCase(repo repo.TaskRepository) NavQueryUseCase {
 	}
 }
 
-func (u NavQueryUseCase) ListByView(ctx context.Context, view domain.View, now time.Time, project string) ([]domain.Task, error) {
+func (u NavQueryUseCase) ListByView(ctx context.Context, view domain.View, now time.Time, project string, includeDone bool) ([]domain.Task, error) {
 	tasks, err := u.Repo.List(ctx, repo.TaskListFilter{})
 	if err != nil {
 		return nil, err
@@ -28,14 +29,43 @@ func (u NavQueryUseCase) ListByView(ctx context.Context, view domain.View, now t
 
 	out := make([]domain.Task, 0, len(tasks))
 	for _, task := range tasks {
-		if u.matchView(task, view, now, project) {
+		if u.matchView(task, view, now, project, includeDone) {
 			out = append(out, task)
 		}
+	}
+	if view == domain.ViewLog {
+		sort.SliceStable(out, func(i, j int) bool {
+			left := out[i]
+			right := out[j]
+			if left.DoneAt == nil && right.DoneAt == nil {
+				return left.ID > right.ID
+			}
+			if left.DoneAt == nil {
+				return false
+			}
+			if right.DoneAt == nil {
+				return true
+			}
+			if left.DoneAt.Equal(*right.DoneAt) {
+				return left.ID > right.ID
+			}
+			return left.DoneAt.After(*right.DoneAt)
+		})
+	}
+	if view == domain.ViewTrash {
+		sort.SliceStable(out, func(i, j int) bool {
+			left := out[i]
+			right := out[j]
+			if left.UpdatedAt.Equal(right.UpdatedAt) {
+				return left.ID > right.ID
+			}
+			return left.UpdatedAt.After(right.UpdatedAt)
+		})
 	}
 	return out, nil
 }
 
-func (u NavQueryUseCase) matchView(task domain.Task, view domain.View, now time.Time, project string) bool {
+func (u NavQueryUseCase) matchView(task domain.Task, view domain.View, now time.Time, project string, includeDone bool) bool {
 	switch view {
 	case domain.ViewInbox:
 		return task.Status == domain.StatusInbox
@@ -47,7 +77,7 @@ func (u NavQueryUseCase) matchView(task domain.Task, view domain.View, now time.
 		if project == "" {
 			return false
 		}
-		return task.Project == project && isProjectStatus(task.Status)
+		return task.Project == project && isProjectStatus(task.Status, includeDone)
 	case domain.ViewTrash:
 		return task.Status == domain.StatusDeleted
 	default:
@@ -90,8 +120,11 @@ func isLogTask(task domain.Task, now time.Time, windowDays int) bool {
 	return !task.DoneAt.UTC().Before(windowStart)
 }
 
-func isProjectStatus(status domain.Status) bool {
-	return status == domain.StatusInbox || status == domain.StatusTodo || status == domain.StatusDoing
+func isProjectStatus(status domain.Status, includeDone bool) bool {
+	if status == domain.StatusInbox || status == domain.StatusTodo || status == domain.StatusDoing {
+		return true
+	}
+	return includeDone && status == domain.StatusDone
 }
 
 func startOfDay(t time.Time) time.Time {
