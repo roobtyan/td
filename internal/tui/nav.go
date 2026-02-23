@@ -18,21 +18,30 @@ func defaultNavItems() []navItem {
 }
 
 func renderNav(items []navItem, selected int, active domain.View, focused bool) []string {
-	lines := []string{"Views"}
+	lines := []string{navTitleStyle.Render("Views")}
 	for idx, item := range items {
-		cursor := " "
+		cursor := "  "
 		if idx == selected {
-			cursor = ">"
+			cursor = "> "
 		}
 		activeMark := " "
 		if item.View == active {
 			activeMark = "*"
 		}
-		lines = append(lines, cursor+activeMark+" "+item.Label)
+		line := cursor + activeMark + " " + item.Label
+		if idx == selected {
+			line = navSelectedStyle.Render(line)
+		} else if item.View == active {
+			line = navActiveStyle.Render(line)
+		}
+		lines = append(lines, line)
 	}
-	if focused {
+	if !focused {
 		lines = append(lines, "")
-		lines = append(lines, "focus: nav")
+		lines = append(lines, " ")
+	} else {
+		lines = append(lines, "")
+		lines = append(lines, navActiveStyle.Render("focus: nav"))
 	}
-	return lines
+	return splitRendered(navBoxStyle.Render(joinLines(lines)))
 }

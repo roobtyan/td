@@ -2,10 +2,11 @@
 
 ## Overview
 
-MVP-A 使用固定双栏布局：
+MVP-A 使用单页全屏 TUI（htop 风格）：
 
-- 左栏：导航（1/4 宽度）
-- 右栏：任务列表（3/4 宽度）
+- Header：左上角 `TD` ASCII 标识 + 今日进度条
+- Body：左栏导航（1/4）+ 右栏任务列表（3/4）
+- Footer：状态消息 + 快捷键提示
 
 CLI 与 TUI 共享同一应用层与 sqlite 数据源。
 
@@ -30,6 +31,14 @@ CLI 与 TUI 共享同一应用层与 sqlite 数据源。
 - 显示当前视图任务
 - 支持上下移动游标
 - 随左栏视图切换即时刷新
+
+## Header Progress
+
+- 进度标题：`Today Progress`
+- 口径：沿用 Today 规则集合
+- 分母：满足 Today 条件的任务总数（`doing` + `overdue/due today`）
+- 分子：上述集合中 `status=done` 的数量
+- 条形：`[#...-...]` + `done/total + percent`
 
 ## Clipboard Flow
 

@@ -7,4 +7,5 @@ const (
 	KeySelect      = "enter"
 	KeyClipAdd     = "p"
 	KeyClipAddAI   = "ctrl+a"
+	KeyQuit        = "q"
 )

@@ -19,7 +19,10 @@ func newUICmd(cfg config.Config) *cobra.Command {
 			}
 			defer closeDB(closer)
 
-			program := tea.NewProgram(tui.NewModelWithRepo(repo))
+			program := tea.NewProgram(
+				tui.NewModelWithRepo(repo),
+				tea.WithAltScreen(),
+			)
 			_, err = program.Run()
 			return err
 		},
