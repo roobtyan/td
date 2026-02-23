@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"td/internal/domain"
@@ -91,6 +93,44 @@ func (r *TaskRepository) GetByID(ctx context.Context, id int64) (domain.Task, er
 	return task, nil
 }
 
+func (r *TaskRepository) List(ctx context.Context, filter repo.TaskListFilter) ([]domain.Task, error) {
+	query := `SELECT id, title, notes, status, project, priority, done_at, created_at, updated_at
+	            FROM tasks`
+	args := make([]any, 0, 2)
+	clauses := make([]string, 0, 2)
+	if filter.Project != "" {
+		clauses = append(clauses, "project = ?")
+		args = append(args, filter.Project)
+	}
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY id ASC"
+	if filter.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tasks := make([]domain.Task, 0, 16)
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 func (r *TaskRepository) MarkDone(ctx context.Context, ids []int64) error {
 	return r.transit(ctx, ids, domain.StatusDone)
 }
@@ -151,4 +191,38 @@ func (r *TaskRepository) statusByID(ctx context.Context, tx *sql.Tx, id int64) (
 		return "", err
 	}
 	return domain.ParseStatus(rawStatus)
+}
+
+func scanTask(scanner interface {
+	Scan(dest ...any) error
+}) (domain.Task, error) {
+	var (
+		task      domain.Task
+		rawStatus string
+		doneAt    sql.NullTime
+	)
+	if err := scanner.Scan(
+		&task.ID,
+		&task.Title,
+		&task.Notes,
+		&rawStatus,
+		&task.Project,
+		&task.Priority,
+		&doneAt,
+		&task.CreatedAt,
+		&task.UpdatedAt,
+	); err != nil {
+		return domain.Task{}, err
+	}
+
+	status, err := domain.ParseStatus(rawStatus)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("parse status %q: %w", rawStatus, err)
+	}
+	task.Status = status
+	if doneAt.Valid {
+		t := doneAt.Time.UTC()
+		task.DoneAt = &t
+	}
+	return task, nil
 }

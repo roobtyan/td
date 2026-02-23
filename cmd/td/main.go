@@ -4,12 +4,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"td/internal/cli"
+	"td/internal/config"
 )
 
 func NewRootCmd() *cobra.Command {
-	return &cobra.Command{
-		Use: "td",
-	}
+	return cli.NewRootCmd(config.Default())
 }
 
 func main() {

@@ -1,0 +1,44 @@
+package cli
+
+import (
+	"database/sql"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"td/internal/config"
+	"td/internal/repo/sqlite"
+)
+
+func NewRootCmd(cfg config.Config) *cobra.Command {
+	cmd := &cobra.Command{
+		Use: "td",
+	}
+	cmd.AddCommand(newAddCmd(cfg))
+	cmd.AddCommand(newLsCmd(cfg))
+	cmd.AddCommand(newShowCmd(cfg))
+	return cmd
+}
+
+func openTaskRepo(cfg config.Config) (*sqlite.TaskRepository, func() error, error) {
+	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+		return nil, nil, err
+	}
+	db, err := sqlite.Open(cfg.DBPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sqlite.NewTaskRepository(db), func() error {
+		return db.Close()
+	}, nil
+}
+
+func closeDB(closer func() error) error {
+	if closer == nil {
+		return nil
+	}
+	if err := closer(); err != nil && err != sql.ErrConnDone {
+		return err
+	}
+	return nil
+}
