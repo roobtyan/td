@@ -105,6 +105,39 @@ func TestTodayProgressShouldCountDoneAtTodayWithoutDue(t *testing.T) {
 	}
 }
 
+func TestTodayViewShouldSortByPriority(t *testing.T) {
+	loc := time.Local
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, loc)
+	dueMorning := time.Date(2026, 2, 23, 9, 30, 0, 0, loc)
+	dueNoon := time.Date(2026, 2, 23, 12, 0, 0, 0, loc)
+
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task-p3", Status: domain.StatusTodo, Project: "work", Priority: "P3", DueAt: &dueNoon},
+			{ID: 2, Title: "task-p1", Status: domain.StatusDoing, Project: "work", Priority: "P1"},
+			{ID: 3, Title: "task-p2", Status: domain.StatusTodo, Project: "work", Priority: "P2", DueAt: &dueMorning},
+		},
+	}
+
+	m := NewModelWithRepo(r)
+	m.now = func() time.Time { return now }
+	m.activeView = domain.ViewToday
+	m.reload()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = updated.(Model)
+
+	view := ansi.Strip(m.View())
+	idxP1 := strings.Index(view, "task-p1")
+	idxP2 := strings.Index(view, "task-p2")
+	idxP3 := strings.Index(view, "task-p3")
+	if idxP1 < 0 || idxP2 < 0 || idxP3 < 0 {
+		t.Fatalf("today view should contain all tasks, view=%q", view)
+	}
+	if !(idxP1 < idxP2 && idxP2 < idxP3) {
+		t.Fatalf("today view should sort by priority P1->P2->P3, view=%q", view)
+	}
+}
+
 func TestHeaderShouldShowBalancedMetrics(t *testing.T) {
 	loc := time.FixedZone("CST", 8*3600)
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, loc)
@@ -760,6 +793,43 @@ func TestDueInputShouldPrefillCurrentTaskDue(t *testing.T) {
 	}
 }
 
+func TestPriorityInputShouldPrefillCurrentTaskPriority(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, Priority: "P3"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'y')
+
+	if m.inputValue != "P3" {
+		t.Fatalf("inputValue = %q, want %q", m.inputValue, "P3")
+	}
+	if m.inputCursor != len([]rune("P3")) {
+		t.Fatalf("inputCursor = %d, want %d", m.inputCursor, len([]rune("P3")))
+	}
+}
+
+func TestUIPriorityShouldUpdateByY(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, Priority: "P3"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'y')
+	m = sendBackspace(m)
+	m = sendBackspace(m)
+	m = sendText(m, "P1")
+	m = sendEnter(m)
+
+	if r.tasks[0].Priority != "P1" {
+		t.Fatalf("priority = %q, want %q", r.tasks[0].Priority, "P1")
+	}
+}
+
 func TestProjectRenameShouldPrefillSelectedProjectName(t *testing.T) {
 	r := &fakeTaskRepo{
 		projects: []string{"work"},
@@ -871,8 +941,11 @@ func TestTrashViewShouldShowProjectInTaskRow(t *testing.T) {
 	m = updated.(Model)
 
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "proj:work") {
-		t.Fatalf("trash row should contain project, view=%q", view)
+	if !strings.Contains(view, "work") {
+		t.Fatalf("trash row should contain project name, view=%q", view)
+	}
+	if strings.Contains(view, "proj:") {
+		t.Fatalf("trash row should not contain explicit project field label, view=%q", view)
 	}
 }
 
@@ -942,15 +1015,25 @@ func TestListShouldShowDueInTaskRow(t *testing.T) {
 	due := time.Date(2026, 2, 24, 9, 30, 0, 0, time.Local)
 	r := &fakeTaskRepo{
 		tasks: []domain.Task{
-			{ID: 1, Title: "with due", Status: domain.StatusInbox, DueAt: &due},
+			{ID: 1, Title: "with due", Status: domain.StatusInbox, Priority: "P2", DueAt: &due},
 		},
 	}
 	m := NewModelWithRepo(r)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = updated.(Model)
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "2026-02-24 09:30") {
+	taskLine := lineContaining(view, "with due")
+	if taskLine == "" {
+		t.Fatalf("task row should exist, view=%q", view)
+	}
+	if !strings.Contains(taskLine, "2026-02-24 09:30") {
 		t.Fatalf("task row should contain due text, view=%q", view)
+	}
+	if !strings.Contains(taskLine, "P2") {
+		t.Fatalf("task row should contain priority text, view=%q", view)
+	}
+	if strings.Contains(taskLine, "due:") {
+		t.Fatalf("task row should not contain explicit due field label, view=%q", view)
 	}
 }
 
@@ -958,7 +1041,7 @@ func TestTodayViewTaskRowShouldShowProjectAndDue(t *testing.T) {
 	due := time.Date(2026, 2, 24, 9, 30, 0, 0, time.Local)
 	r := &fakeTaskRepo{
 		tasks: []domain.Task{
-			{ID: 1, Title: "today task", Status: domain.StatusDoing, Project: "work", DueAt: &due},
+			{ID: 1, Title: "today task", Status: domain.StatusDoing, Project: "work", Priority: "P1", DueAt: &due},
 		},
 	}
 	m := NewModelWithRepo(r)
@@ -968,11 +1051,21 @@ func TestTodayViewTaskRowShouldShowProjectAndDue(t *testing.T) {
 	m = updated.(Model)
 
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "proj:work") {
+	taskLine := lineContaining(view, "today task")
+	if taskLine == "" {
+		t.Fatalf("today row should exist, view=%q", view)
+	}
+	if !strings.Contains(taskLine, "work") {
 		t.Fatalf("today row should contain project text, view=%q", view)
 	}
-	if !strings.Contains(view, "due:2026-02-24 09:30") {
+	if !strings.Contains(taskLine, "2026-02-24 09:30") {
 		t.Fatalf("today row should contain due text, view=%q", view)
+	}
+	if !strings.Contains(taskLine, "P1") {
+		t.Fatalf("today row should contain priority, view=%q", view)
+	}
+	if strings.Contains(taskLine, "proj:") || strings.Contains(taskLine, "due:") {
+		t.Fatalf("today row should not contain explicit field labels, view=%q", view)
 	}
 }
 
@@ -1087,7 +1180,7 @@ func TestLogViewShouldShowProjectAndDoneAt(t *testing.T) {
 	doneAt := now.Add(-30 * time.Minute)
 	r := &fakeTaskRepo{
 		tasks: []domain.Task{
-			{ID: 1, Title: "测试用例", Status: domain.StatusDone, Project: "xxx", DoneAt: &doneAt},
+			{ID: 1, Title: "测试用例", Status: domain.StatusDone, Project: "xxx", Priority: "P2", DoneAt: &doneAt},
 		},
 	}
 	m := NewModelWithRepo(r)
@@ -1098,11 +1191,17 @@ func TestLogViewShouldShowProjectAndDoneAt(t *testing.T) {
 	m = updated.(Model)
 
 	view := ansi.Strip(m.View())
-	if !strings.Contains(view, "proj:xxx") {
+	if !strings.Contains(view, "xxx") {
 		t.Fatalf("log row should contain project, view=%q", view)
 	}
-	if !strings.Contains(view, "done:2026-02-23 19:30") {
+	if !strings.Contains(view, "2026-02-23 19:30") {
 		t.Fatalf("log row should contain done time, view=%q", view)
+	}
+	if !strings.Contains(view, "P2") {
+		t.Fatalf("log row should contain priority, view=%q", view)
+	}
+	if strings.Contains(view, "proj:") || strings.Contains(view, "done:") {
+		t.Fatalf("log row should not contain explicit field labels, view=%q", view)
 	}
 }
 
@@ -1519,6 +1618,16 @@ func (f *fakeTaskRepo) UpdateDueAt(_ context.Context, id int64, dueAt *time.Time
 	return domain.ErrTaskNotFound
 }
 
+func (f *fakeTaskRepo) UpdatePriority(_ context.Context, id int64, priority string) error {
+	for i := range f.tasks {
+		if f.tasks[i].ID == id {
+			f.tasks[i].Priority = domain.NormalizePriority(priority)
+			return nil
+		}
+	}
+	return domain.ErrTaskNotFound
+}
+
 func (f *fakeTaskRepo) SetStatus(_ context.Context, id int64, status domain.Status) error {
 	for i := range f.tasks {
 		if f.tasks[i].ID == id {
@@ -1684,4 +1793,14 @@ func selectedLineContains(view, target string) bool {
 		}
 	}
 	return false
+}
+
+func lineContaining(view, target string) string {
+	lines := strings.Split(view, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, target) {
+			return line
+		}
+	}
+	return ""
 }

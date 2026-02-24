@@ -259,22 +259,35 @@ func TestHelpModalShouldContainTrashActions(t *testing.T) {
 	}
 }
 
+func TestHelpModalShouldContainPriorityAction(t *testing.T) {
+	modal := ansi.Strip(renderHelpModal(100))
+	if !strings.Contains(modal, "y") || !strings.Contains(modal, "set priority") {
+		t.Fatalf("help modal should contain priority action, modal=%q", modal)
+	}
+}
+
 func TestRenderTaskLineShouldAlignMetaColumnByStatusWidth(t *testing.T) {
 	loc := time.Local
 	due := time.Date(2026, 2, 24, 9, 30, 0, 0, loc)
-	todoTask := domain.Task{Title: "todo-item", Status: domain.StatusTodo, DueAt: &due}
-	doingTask := domain.Task{Title: "doing-item", Status: domain.StatusDoing, DueAt: &due}
+	todoTask := domain.Task{Title: "todo-item", Status: domain.StatusTodo, Priority: "P1", DueAt: &due}
+	doingTask := domain.Task{Title: "doing-item", Status: domain.StatusDoing, Priority: "P2", DueAt: &due}
 
 	lineTodo := renderTaskLine("  ", renderStatusLabel(todoTask.Status), todoTask, domain.ViewInbox, loc, 120)
 	lineDoing := renderTaskLine("  ", renderStatusLabel(doingTask.Status), doingTask, domain.ViewInbox, loc, 120)
 
-	idxTodo := strings.Index(lineTodo, "due:")
-	idxDoing := strings.Index(lineDoing, "due:")
+	idxTodo := strings.Index(lineTodo, "2026-02-24 09:30")
+	idxDoing := strings.Index(lineDoing, "2026-02-24 09:30")
 	if idxTodo < 0 || idxDoing < 0 {
 		t.Fatalf("both lines should contain due meta, todo=%q doing=%q", lineTodo, lineDoing)
 	}
 	if idxTodo != idxDoing {
 		t.Fatalf("meta column should align, idxTodo=%d idxDoing=%d todo=%q doing=%q", idxTodo, idxDoing, lineTodo, lineDoing)
+	}
+	if strings.Contains(lineTodo, "due:") || strings.Contains(lineDoing, "due:") {
+		t.Fatalf("task line should not contain explicit due field label, todo=%q doing=%q", lineTodo, lineDoing)
+	}
+	if !strings.Contains(lineTodo, "P1") || !strings.Contains(lineDoing, "P2") {
+		t.Fatalf("task line should contain priority, todo=%q doing=%q", lineTodo, lineDoing)
 	}
 }
 

@@ -6,8 +6,9 @@ import (
 )
 
 var (
-	ErrTaskNotFound  = errors.New("task not found")
-	ErrInvalidStatus = errors.New("invalid status")
+	ErrTaskNotFound    = errors.New("task not found")
+	ErrInvalidStatus   = errors.New("invalid status")
+	ErrInvalidPriority = errors.New("invalid priority")
 )
 
 type InvalidTransitionError struct {

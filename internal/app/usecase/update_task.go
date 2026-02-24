@@ -32,6 +32,10 @@ func (u UpdateTaskUseCase) SetDueAt(ctx context.Context, id int64, dueAt *time.T
 	return u.Repo.UpdateDueAt(ctx, id, dueAt)
 }
 
+func (u UpdateTaskUseCase) SetPriority(ctx context.Context, id int64, priority string) error {
+	return u.Repo.UpdatePriority(ctx, id, priority)
+}
+
 func (u UpdateTaskUseCase) SetStatus(ctx context.Context, id int64, status domain.Status) error {
 	return u.Repo.SetStatus(ctx, id, status)
 }

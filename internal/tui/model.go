@@ -30,6 +30,7 @@ const (
 	inputEdit
 	inputTaskProject
 	inputDue
+	inputPriority
 	inputProjectCreate
 	inputProjectRename
 )
@@ -260,6 +261,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					initial = formatDue(task.DueAt, m.now().Location())
 				}
 				m.beginInput(inputDue, initial, "")
+			}
+		case KeyPriority:
+			if task, ok := m.currentTaskForAction(); ok {
+				initial := domain.NormalizePriority(task.Priority)
+				m.beginInput(inputPriority, initial, "")
 			}
 		case KeyDelete:
 			if m.tryDeleteProjectFromNav() {
@@ -910,6 +916,24 @@ func (m *Model) submitInput() {
 		} else {
 			m.statusMsg = fmt.Sprintf("due #%d updated", task.ID)
 		}
+	case inputPriority:
+		task, ok := m.currentTaskForAction()
+		if !ok {
+			m.endInput()
+			return
+		}
+		priority := domain.NormalizePriority(text)
+		if !domain.IsValidPriority(priority) {
+			m.statusMsg = "invalid priority"
+			return
+		}
+		uc := usecase.UpdateTaskUseCase{Repo: repo}
+		if err := uc.SetPriority(context.Background(), task.ID, priority); err != nil {
+			m.statusMsg = fmt.Sprintf("set priority failed: %v", err)
+			m.endInput()
+			return
+		}
+		m.statusMsg = fmt.Sprintf("priority #%d -> %s", task.ID, priority)
 	case inputProjectCreate:
 		if text == "" {
 			m.statusMsg = "project name is empty"
@@ -1277,6 +1301,8 @@ func (m Model) inputPrompt() string {
 		return "project> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputDue:
 		return "due(YYYY-MM-DD HH:MM)> " + renderCursorAt(m.inputValue, m.inputCursor)
+	case inputPriority:
+		return "priority(P1-P4)> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputProjectCreate:
 		return "project add> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputProjectRename:

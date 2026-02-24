@@ -11,6 +11,7 @@ const (
 	KeyProject     = "P"
 	KeyToday       = "t"
 	KeyDue         = "d"
+	KeyPriority    = "y"
 	KeyComplete    = "c"
 	KeyRestore     = "r"
 	KeyToggleDone  = "h"

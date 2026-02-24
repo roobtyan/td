@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/spf13/cobra"
 
 	"td/internal/app/usecase"
@@ -46,9 +48,11 @@ func newLsCmd(cfg config.Config) *cobra.Command {
 					return fmt.Errorf("unsupported ls view %q, only today is supported", args[0])
 				}
 			}
-			sortTasksForLS(tasks)
+			if len(args) == 0 {
+				sortTasksForLS(tasks)
+			}
 			for _, task := range tasks {
-				cmd.Println(formatTaskLine(task.ID, string(task.Status), task.Title, task.Project, task.DueAt))
+				cmd.Println(formatTaskLine(task.ID, string(task.Status), task.Title, task.Project, task.DueAt, task.Priority))
 			}
 			return nil
 		},
@@ -56,8 +60,50 @@ func newLsCmd(cfg config.Config) *cobra.Command {
 	return cmd
 }
 
-func formatTaskLine(id int64, status, title, project string, dueAt *time.Time) string {
-	return fmt.Sprintf("%d\t[%s]\t%s\t%s\t%s", id, status, title, formatProject(project), formatDue(dueAt))
+const (
+	lsIDWidth       = 5
+	lsStatusWidth   = 8
+	lsTitleWidth    = 34
+	lsProjectWidth  = 16
+	lsDueWidth      = 16
+	lsPriorityWidth = 3
+)
+
+func formatTaskLine(id int64, status, title, project string, dueAt *time.Time, priority string) string {
+	parts := []string{
+		padLSField(strconv.FormatInt(id, 10), lsIDWidth),
+		padLSField("["+status+"]", lsStatusWidth),
+		padLSField(title, lsTitleWidth),
+		padLSField(formatProject(project), lsProjectWidth),
+		padLSField(formatDue(dueAt), lsDueWidth),
+		padLSField(formatPriority(priority), lsPriorityWidth),
+	}
+	return strings.TrimRight(strings.Join(parts, " "), " ")
+}
+
+func padLSField(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	text = flattenLSField(text)
+	tail := ""
+	if width > 3 {
+		tail = "..."
+	}
+	text = ansi.Truncate(text, width, tail)
+	w := ansi.StringWidth(text)
+	if w >= width {
+		return text
+	}
+	return text + strings.Repeat(" ", width-w)
+}
+
+func flattenLSField(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	return text
 }
 
 func formatProject(project string) string {
@@ -73,6 +119,14 @@ func formatDue(dueAt *time.Time) string {
 		return "-"
 	}
 	return dueAt.In(time.Local).Format("2006-01-02 15:04")
+}
+
+func formatPriority(priority string) string {
+	priority = domain.NormalizePriority(priority)
+	if !domain.IsValidPriority(priority) {
+		return domain.DefaultPriority
+	}
+	return priority
 }
 
 func filterOutDeleted(tasks []domain.Task) []domain.Task {

@@ -43,6 +43,37 @@ func TestTodayView(t *testing.T) {
 	assertNotContains(t, got, "done-overdue")
 }
 
+func TestTodayViewShouldSortByPriorityThenDue(t *testing.T) {
+	db := openNavTestDB(t)
+	defer db.Close()
+	if err := sqlite.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	seedNavTaskWithPriority(t, db, "task-p3", domain.StatusTodo, "work", "P3", ptrTime(now.Add(2*time.Hour)), nil)
+	seedNavTaskWithPriority(t, db, "task-p1", domain.StatusTodo, "work", "P1", ptrTime(now.Add(6*time.Hour)), nil)
+	seedNavTaskWithPriority(t, db, "task-p2", domain.StatusDoing, "work", "P2", nil, nil)
+
+	repo := sqlite.NewTaskRepository(db)
+	uc := NewNavQueryUseCase(repo)
+
+	tasks, err := uc.ListByView(context.Background(), domain.ViewToday, now, "", false)
+	if err != nil {
+		t.Fatalf("list today: %v", err)
+	}
+	got := titles(tasks)
+	want := []string{"task-p1", "task-p2", "task-p3"}
+	if len(got) != len(want) {
+		t.Fatalf("today size = %d, want %d, got=%v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("today order mismatch at %d, got=%v want=%v", i, got, want)
+		}
+	}
+}
+
 func TestProjectViewShowDoneToggle(t *testing.T) {
 	db := openNavTestDB(t)
 	defer db.Close()
@@ -184,6 +215,11 @@ func openNavTestDB(t *testing.T) *sql.DB {
 
 func seedNavTask(t *testing.T, db *sql.DB, title string, status domain.Status, project string, dueAt, doneAt *time.Time) {
 	t.Helper()
+	seedNavTaskWithPriority(t, db, title, status, project, "P2", dueAt, doneAt)
+}
+
+func seedNavTaskWithPriority(t *testing.T, db *sql.DB, title string, status domain.Status, project, priority string, dueAt, doneAt *time.Time) {
+	t.Helper()
 	var due any
 	if dueAt != nil {
 		due = *dueAt
@@ -194,8 +230,8 @@ func seedNavTask(t *testing.T, db *sql.DB, title string, status domain.Status, p
 	}
 	_, err := db.Exec(
 		`INSERT INTO tasks(title, notes, status, project, priority, due_at, done_at)
-		 VALUES (?, '', ?, ?, 'P2', ?, ?)`,
-		title, string(status), project, due, done,
+		 VALUES (?, '', ?, ?, ?, ?, ?)`,
+		title, string(status), project, priority, due, done,
 	)
 	if err != nil {
 		t.Fatalf("seed task %q: %v", title, err)

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
@@ -42,7 +43,21 @@ func renderList(tasks []domain.Task, cursor int, focused bool, width, height int
 }
 
 func renderStatusLabel(status domain.Status) string {
-	return "[" + string(status) + "]"
+	label := "[" + string(status) + "]"
+	switch status {
+	case domain.StatusInbox:
+		return statusInboxStyle.Render(label)
+	case domain.StatusTodo:
+		return statusTodoStyle.Render(label)
+	case domain.StatusDoing:
+		return statusDoingStyle.Render(label)
+	case domain.StatusDone:
+		return statusDoneStyle.Render(label)
+	case domain.StatusDeleted:
+		return statusDelStyle.Render(label)
+	default:
+		return listRowStyle.Render(label)
+	}
 }
 
 func formatDue(dueAt *time.Time, loc *time.Location) string {
@@ -73,33 +88,77 @@ func renderTaskLine(prefix, status string, task domain.Task, view domain.View, l
 		loc = time.Local
 	}
 	statusField := padFixed(status, 9)
-
-	if view == domain.ViewLog {
-		project := task.Project
-		if project == "" {
-			project = "-"
-		}
-		meta := fmt.Sprintf("proj:%s  done:%s", project, formatDoneAt(task.DoneAt, loc))
-		return composeTaskLine(prefix, statusField, task.Title, meta, width)
-	}
-	if view == domain.ViewTrash {
-		project := task.Project
-		if project == "" {
-			project = "-"
-		}
-		meta := fmt.Sprintf("proj:%s", project)
-		return composeTaskLine(prefix, statusField, task.Title, meta, width)
-	}
-	if view == domain.ViewToday {
-		project := task.Project
-		if project == "" {
-			project = "-"
-		}
-		meta := fmt.Sprintf("proj:%s  due:%s", project, formatDue(task.DueAt, loc))
-		return composeTaskLine(prefix, statusField, task.Title, meta, width)
-	}
-	meta := fmt.Sprintf("due:%s", formatDue(task.DueAt, loc))
+	meta := renderTaskMeta(task, view, loc)
 	return composeTaskLine(prefix, statusField, task.Title, meta, width)
+}
+
+func renderTaskMeta(task domain.Task, view domain.View, loc *time.Location) string {
+	segments := make([]string, 0, 3)
+
+	switch view {
+	case domain.ViewLog:
+		segments = append(segments, renderProjectMeta(task.Project))
+		segments = append(segments, renderDoneMeta(task.DoneAt, loc))
+		segments = append(segments, renderPriorityMeta(task.Priority))
+	case domain.ViewTrash:
+		segments = append(segments, renderProjectMeta(task.Project))
+		segments = append(segments, renderPriorityMeta(task.Priority))
+	case domain.ViewToday:
+		segments = append(segments, renderProjectMeta(task.Project))
+		segments = append(segments, renderDueMeta(task.DueAt, loc))
+		segments = append(segments, renderPriorityMeta(task.Priority))
+	default:
+		segments = append(segments, renderDueMeta(task.DueAt, loc))
+		segments = append(segments, renderPriorityMeta(task.Priority))
+	}
+	return strings.Join(segments, "  ")
+}
+
+func renderProjectMeta(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return metaMutedStyle.Render("-")
+	}
+	return metaProjectStyle.Render(project)
+}
+
+func renderDueMeta(dueAt *time.Time, loc *time.Location) string {
+	if dueAt == nil {
+		return metaMutedStyle.Render("-")
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	dueLocal := dueAt.In(loc)
+	label := dueLocal.Format("2006-01-02 15:04")
+	if dueLocal.Before(time.Now().In(loc)) {
+		return metaDueOverdueStyle.Render(label)
+	}
+	return metaDueStyle.Render(label)
+}
+
+func renderDoneMeta(doneAt *time.Time, loc *time.Location) string {
+	if doneAt == nil {
+		return metaMutedStyle.Render("-")
+	}
+	return metaDoneStyle.Render(formatDoneAt(doneAt, loc))
+}
+
+func renderPriorityMeta(priority string) string {
+	priority = domain.NormalizePriority(priority)
+	if !domain.IsValidPriority(priority) {
+		priority = domain.DefaultPriority
+	}
+	switch priority {
+	case "P1":
+		return priorityP1Style.Render(priority)
+	case "P2":
+		return priorityP2Style.Render(priority)
+	case "P3":
+		return priorityP3Style.Render(priority)
+	default:
+		return priorityP4Style.Render(priority)
+	}
 }
 
 func composeTaskLine(prefix, statusField, title, meta string, width int) string {

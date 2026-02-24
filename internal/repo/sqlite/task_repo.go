@@ -30,9 +30,9 @@ func (r *TaskRepository) Create(ctx context.Context, task domain.Task) (int64, e
 	if !domain.IsValidStatus(status) {
 		return 0, domain.ErrInvalidStatus
 	}
-	priority := task.Priority
-	if priority == "" {
-		priority = "P2"
+	priority := domain.NormalizePriority(task.Priority)
+	if !domain.IsValidPriority(priority) {
+		return 0, domain.ErrInvalidPriority
 	}
 	if err := r.ensureProject(ctx, task.Project); err != nil {
 		return 0, err
@@ -429,6 +429,31 @@ func (r *TaskRepository) UpdateDueAt(ctx context.Context, id int64, dueAt *time.
 		    SET due_at = ?, updated_at = CURRENT_TIMESTAMP
 		  WHERE id = ?`,
 		due, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrTaskNotFound
+	}
+	return nil
+}
+
+func (r *TaskRepository) UpdatePriority(ctx context.Context, id int64, priority string) error {
+	priority = domain.NormalizePriority(priority)
+	if !domain.IsValidPriority(priority) {
+		return domain.ErrInvalidPriority
+	}
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET priority = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE id = ?`,
+		priority, id,
 	)
 	if err != nil {
 		return err

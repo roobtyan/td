@@ -23,6 +23,7 @@ func NewRootCmd(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newEditCmd(cfg))
 	cmd.AddCommand(newTodayCmd(cfg))
 	cmd.AddCommand(newDueCmd(cfg))
+	cmd.AddCommand(newPriorityCmd(cfg))
 	cmd.AddCommand(newRmCmd(cfg))
 	cmd.AddCommand(newRestoreCmd(cfg))
 	cmd.AddCommand(newPurgeCmd(cfg))

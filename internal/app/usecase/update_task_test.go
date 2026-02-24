@@ -62,6 +62,18 @@ func TestUpdateTaskUseCaseSetStatus(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskUseCaseSetPriority(t *testing.T) {
+	stub := &updateTaskRepoStub{}
+	uc := UpdateTaskUseCase{Repo: stub}
+
+	if err := uc.SetPriority(context.Background(), 11, "P1"); err != nil {
+		t.Fatalf("set priority: %v", err)
+	}
+	if stub.priorityID != 11 || stub.priority != "P1" {
+		t.Fatalf("set priority = (id=%d, priority=%s), want (11, P1)", stub.priorityID, stub.priority)
+	}
+}
+
 func TestUpdateTaskUseCaseMarkProjectDone(t *testing.T) {
 	stub := &updateTaskRepoStub{
 		tasks: []domain.Task{
@@ -91,6 +103,8 @@ type updateTaskRepoStub struct {
 	project      string
 	dueID        int64
 	dueAt        *time.Time
+	priorityID   int64
+	priority     string
 	statusID     int64
 	status       domain.Status
 	markDoingIDs []int64
@@ -146,6 +160,12 @@ func (s *updateTaskRepoStub) UpdateProject(_ context.Context, id int64, project 
 func (s *updateTaskRepoStub) UpdateDueAt(_ context.Context, id int64, dueAt *time.Time) error {
 	s.dueID = id
 	s.dueAt = dueAt
+	return nil
+}
+
+func (s *updateTaskRepoStub) UpdatePriority(_ context.Context, id int64, priority string) error {
+	s.priorityID = id
+	s.priority = priority
 	return nil
 }
 

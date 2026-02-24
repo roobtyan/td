@@ -117,4 +117,15 @@ var (
 	statusDoingStyle = lipgloss.NewStyle().Foreground(warnColor)
 	statusDoneStyle  = lipgloss.NewStyle().Foreground(okColor)
 	statusDelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171"))
+
+	metaProjectStyle    = lipgloss.NewStyle().Foreground(accentColor)
+	metaDueStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#7DD3FC"))
+	metaDueOverdueStyle = lipgloss.NewStyle().Foreground(warnColor).Bold(true)
+	metaDoneStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#93C5FD"))
+	metaMutedStyle      = lipgloss.NewStyle().Foreground(mutedColor)
+
+	priorityP1Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#FB7185")).Bold(true)
+	priorityP2Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#FBBF24")).Bold(true)
+	priorityP3Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#60A5FA"))
+	priorityP4Style = lipgloss.NewStyle().Foreground(mutedColor)
 )

@@ -34,6 +34,29 @@ func (u NavQueryUseCase) ListByView(ctx context.Context, view domain.View, now t
 			out = append(out, task)
 		}
 	}
+	if view == domain.ViewToday {
+		sort.SliceStable(out, func(i, j int) bool {
+			left := out[i]
+			right := out[j]
+
+			lp := domain.PriorityRank(left.Priority)
+			rp := domain.PriorityRank(right.Priority)
+			if lp != rp {
+				return lp < rp
+			}
+
+			if left.DueAt == nil && right.DueAt != nil {
+				return false
+			}
+			if left.DueAt != nil && right.DueAt == nil {
+				return true
+			}
+			if left.DueAt != nil && right.DueAt != nil && !left.DueAt.Equal(*right.DueAt) {
+				return left.DueAt.Before(*right.DueAt)
+			}
+			return left.ID < right.ID
+		})
+	}
 	if view == domain.ViewLog {
 		sort.SliceStable(out, func(i, j int) bool {
 			left := out[i]

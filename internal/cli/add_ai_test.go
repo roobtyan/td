@@ -79,7 +79,7 @@ func TestAddClipAIShouldWriteDueAndTodo(t *testing.T) {
 	}
 
 	ls := runCLI(t, cfg, "ls")
-	if !strings.Contains(ls, strconv.FormatInt(id, 10)+"\t[todo]\t完成在线推理功能") {
+	if !strings.Contains(ls, strconv.FormatInt(id, 10)) || !strings.Contains(ls, "[todo]") || !strings.Contains(ls, "完成在线推理功能") {
 		t.Fatalf("ls output = %q, want todo row", ls)
 	}
 	if !strings.Contains(ls, "2026-02-25 13:00") {
