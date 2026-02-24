@@ -30,6 +30,7 @@ type Options struct {
 	TargetPath     string
 	GOOS           string
 	GOARCH         string
+	GitHubToken    string
 	HTTPClient     *http.Client
 }
 
@@ -51,6 +52,7 @@ type Updater struct {
 	targetPath     string
 	goos           string
 	goarch         string
+	githubToken    string
 	httpClient     *http.Client
 }
 
@@ -90,6 +92,14 @@ func New(opts Options) *Updater {
 		goarch = runtimeGOARCH()
 	}
 
+	githubToken := strings.TrimSpace(opts.GitHubToken)
+	if githubToken == "" {
+		githubToken = strings.TrimSpace(os.Getenv("GH_TOKEN"))
+	}
+	if githubToken == "" {
+		githubToken = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	}
+
 	return &Updater{
 		owner:          defaultString(opts.Owner, "roobtyan"),
 		repo:           defaultString(opts.Repo, "td"),
@@ -98,6 +108,7 @@ func New(opts Options) *Updater {
 		targetPath:     targetPath,
 		goos:           goos,
 		goarch:         goarch,
+		githubToken:    githubToken,
 		httpClient:     client,
 	}
 }
@@ -180,6 +191,7 @@ func (u *Updater) fetchLatestRelease(ctx context.Context) (releaseResponse, erro
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "td-updater")
+	u.addAuthHeader(req)
 
 	resp, err := u.httpClient.Do(req)
 	if err != nil {
@@ -207,6 +219,7 @@ func (u *Updater) getBytes(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "td-updater")
+	u.addAuthHeader(req)
 
 	resp, err := u.httpClient.Do(req)
 	if err != nil {
@@ -218,6 +231,17 @@ func (u *Updater) getBytes(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("download failed: %s (%s)", resp.Status, strings.TrimSpace(string(body)))
 	}
 	return io.ReadAll(resp.Body)
+}
+
+func (u *Updater) addAuthHeader(req *http.Request) {
+	if req == nil {
+		return
+	}
+	token := strings.TrimSpace(u.githubToken)
+	if token == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 }
 
 func verifyChecksum(sumData []byte, assetName string, data []byte) error {

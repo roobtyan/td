@@ -191,6 +191,17 @@ sudo -E td upgrade
 
 `-E` 用于保留代理环境变量。
 
+3. GitHub API 限流（`403 Forbidden` / `API rate limit exceeded`）
+
+```bash
+export GH_TOKEN=your_github_pat
+# 或 export GITHUB_TOKEN=your_github_pat
+td upgrade --check
+td upgrade
+```
+
+`GH_TOKEN` 优先于 `GITHUB_TOKEN`。
+
 ## 配置与数据目录
 
 - 默认目录：`$HOME/.td`

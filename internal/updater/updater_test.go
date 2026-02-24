@@ -115,6 +115,123 @@ func TestCheckDetectsUpdate(t *testing.T) {
 	}
 }
 
+func TestCheckShouldUseGHTokenFromEnv(t *testing.T) {
+	t.Setenv("GH_TOKEN", "gh-token-123")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/repos/roobtyan/td/releases/latest" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{
+  "tag_name": "v0.2.0",
+  "assets": [
+    {"name": "td-darwin-arm64", "browser_download_url": "https://example.com/td-darwin-arm64"},
+    {"name": "sha256sum.txt", "browser_download_url": "https://example.com/sha256sum.txt"}
+  ]
+}`)
+	}))
+	defer api.Close()
+
+	u := New(Options{
+		Owner:          "roobtyan",
+		Repo:           "td",
+		CurrentVersion: "v0.1.0",
+		APIBaseURL:     api.URL,
+		HTTPClient:     api.Client(),
+		GOOS:           "darwin",
+		GOARCH:         "arm64",
+	})
+
+	if _, err := u.Check(context.Background()); err != nil {
+		t.Fatalf("Check error = %v", err)
+	}
+	if gotAuth != "Bearer gh-token-123" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer gh-token-123")
+	}
+}
+
+func TestCheckShouldFallbackToGitHubTokenEnv(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "github-token-456")
+
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/repos/roobtyan/td/releases/latest" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{
+  "tag_name": "v0.2.0",
+  "assets": [
+    {"name": "td-darwin-arm64", "browser_download_url": "https://example.com/td-darwin-arm64"},
+    {"name": "sha256sum.txt", "browser_download_url": "https://example.com/sha256sum.txt"}
+  ]
+}`)
+	}))
+	defer api.Close()
+
+	u := New(Options{
+		Owner:          "roobtyan",
+		Repo:           "td",
+		CurrentVersion: "v0.1.0",
+		APIBaseURL:     api.URL,
+		HTTPClient:     api.Client(),
+		GOOS:           "darwin",
+		GOARCH:         "arm64",
+	})
+
+	if _, err := u.Check(context.Background()); err != nil {
+		t.Fatalf("Check error = %v", err)
+	}
+	if gotAuth != "Bearer github-token-456" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer github-token-456")
+	}
+}
+
+func TestCheckShouldPreferGHTokenOverGitHubToken(t *testing.T) {
+	t.Setenv("GH_TOKEN", "gh-priority-token")
+	t.Setenv("GITHUB_TOKEN", "github-secondary-token")
+
+	var gotAuth string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if r.URL.Path != "/repos/roobtyan/td/releases/latest" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{
+  "tag_name": "v0.2.0",
+  "assets": [
+    {"name": "td-darwin-arm64", "browser_download_url": "https://example.com/td-darwin-arm64"},
+    {"name": "sha256sum.txt", "browser_download_url": "https://example.com/sha256sum.txt"}
+  ]
+}`)
+	}))
+	defer api.Close()
+
+	u := New(Options{
+		Owner:          "roobtyan",
+		Repo:           "td",
+		CurrentVersion: "v0.1.0",
+		APIBaseURL:     api.URL,
+		HTTPClient:     api.Client(),
+		GOOS:           "darwin",
+		GOARCH:         "arm64",
+	})
+
+	if _, err := u.Check(context.Background()); err != nil {
+		t.Fatalf("Check error = %v", err)
+	}
+	if gotAuth != "Bearer gh-priority-token" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer gh-priority-token")
+	}
+}
+
 func TestUpgradeReplacesBinary(t *testing.T) {
 	newBinary := []byte("new-td-binary")
 	sum := sha256.Sum256(newBinary)
