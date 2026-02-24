@@ -10,6 +10,25 @@ import (
 	"td/internal/domain"
 )
 
+const (
+	listBaseFG       = "\x1b[38;2;226;232;240m"
+	listCursorFG     = "\x1b[1;38;2;63;184;179m"
+	listStatusInbox  = "\x1b[38;2;203;213;225m"
+	listStatusTodo   = "\x1b[38;2;96;165;250m"
+	listStatusDoing  = "\x1b[38;2;251;191;36m"
+	listStatusDone   = "\x1b[38;2;52;211;153m"
+	listStatusDelete = "\x1b[38;2;248;113;113m"
+	listMetaProject  = "\x1b[38;2;150;185;216m"
+	listMetaDue      = "\x1b[38;2;125;211;252m"
+	listMetaDueWarn  = "\x1b[1;38;2;251;191;36m"
+	listMetaDone     = "\x1b[38;2;147;197;253m"
+	listMetaMuted    = "\x1b[38;2;147;161;176m"
+	listPriP1        = "\x1b[1;38;2;251;113;133m"
+	listPriP2        = "\x1b[1;38;2;251;191;36m"
+	listPriP3        = "\x1b[38;2;96;165;250m"
+	listPriP4        = listMetaMuted
+)
+
 func renderList(tasks []domain.Task, cursor int, focused bool, width, height int, view domain.View, loc *time.Location) []string {
 	contentWidth := paneContentWidth(width)
 	contentHeight := paneContentHeight(height)
@@ -22,15 +41,9 @@ func renderList(tasks []domain.Task, cursor int, focused bool, width, height int
 			start, end := viewportWindow(len(tasks), cursor, visible)
 			for idx := start; idx < end; idx++ {
 				task := tasks[idx]
-				prefix := "  "
-				if idx == cursor {
-					prefix = "> "
-				}
+				prefix := renderListPrefix(idx == cursor)
 				status := renderStatusLabel(task.Status)
 				line := renderTaskLine(prefix, status, task, view, loc, contentWidth)
-				if idx == cursor {
-					line = listSelectedStyle.Render(line)
-				}
 				lines = append(lines, line)
 			}
 		}
@@ -46,17 +59,17 @@ func renderStatusLabel(status domain.Status) string {
 	label := "[" + string(status) + "]"
 	switch status {
 	case domain.StatusInbox:
-		return statusInboxStyle.Render(label)
+		return paintList(label, listStatusInbox)
 	case domain.StatusTodo:
-		return statusTodoStyle.Render(label)
+		return paintList(label, listStatusTodo)
 	case domain.StatusDoing:
-		return statusDoingStyle.Render(label)
+		return paintList(label, listStatusDoing)
 	case domain.StatusDone:
-		return statusDoneStyle.Render(label)
+		return paintList(label, listStatusDone)
 	case domain.StatusDeleted:
-		return statusDelStyle.Render(label)
+		return paintList(label, listStatusDelete)
 	default:
-		return listRowStyle.Render(label)
+		return label
 	}
 }
 
@@ -117,14 +130,14 @@ func renderTaskMeta(task domain.Task, view domain.View, loc *time.Location) stri
 func renderProjectMeta(project string) string {
 	project = strings.TrimSpace(project)
 	if project == "" {
-		return metaMutedStyle.Render("-")
+		return paintList("-", listMetaMuted)
 	}
-	return metaProjectStyle.Render(project)
+	return paintList(project, listMetaProject)
 }
 
 func renderDueMeta(dueAt *time.Time, loc *time.Location) string {
 	if dueAt == nil {
-		return metaMutedStyle.Render("-")
+		return paintList("-", listMetaMuted)
 	}
 	if loc == nil {
 		loc = time.Local
@@ -132,16 +145,16 @@ func renderDueMeta(dueAt *time.Time, loc *time.Location) string {
 	dueLocal := dueAt.In(loc)
 	label := dueLocal.Format("2006-01-02 15:04")
 	if dueLocal.Before(time.Now().In(loc)) {
-		return metaDueOverdueStyle.Render(label)
+		return paintList(label, listMetaDueWarn)
 	}
-	return metaDueStyle.Render(label)
+	return paintList(label, listMetaDue)
 }
 
 func renderDoneMeta(doneAt *time.Time, loc *time.Location) string {
 	if doneAt == nil {
-		return metaMutedStyle.Render("-")
+		return paintList("-", listMetaMuted)
 	}
-	return metaDoneStyle.Render(formatDoneAt(doneAt, loc))
+	return paintList(formatDoneAt(doneAt, loc), listMetaDone)
 }
 
 func renderPriorityMeta(priority string) string {
@@ -151,13 +164,13 @@ func renderPriorityMeta(priority string) string {
 	}
 	switch priority {
 	case "P1":
-		return priorityP1Style.Render(priority)
+		return paintList(priority, listPriP1)
 	case "P2":
-		return priorityP2Style.Render(priority)
+		return paintList(priority, listPriP2)
 	case "P3":
-		return priorityP3Style.Render(priority)
+		return paintList(priority, listPriP3)
 	default:
-		return priorityP4Style.Render(priority)
+		return paintList(priority, listPriP4)
 	}
 }
 
@@ -187,4 +200,18 @@ func spaces(n int) string {
 		return ""
 	}
 	return fmt.Sprintf("%*s", n, "")
+}
+
+func renderListPrefix(selected bool) string {
+	if selected {
+		return paintList("> ", listCursorFG)
+	}
+	return "  "
+}
+
+func paintList(text, colorCode string) string {
+	if colorCode == "" {
+		return text
+	}
+	return colorCode + text + listBaseFG
 }

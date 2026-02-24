@@ -119,8 +119,8 @@ func (m Model) WithAIParser(parser *usecase.AIParseTaskUseCase) Model {
 func NewModelWithQuery(uc usecase.NavQueryUseCase) Model {
 	m := Model{
 		navItems:     defaultNavItems(),
-		navIndex:     1,
-		activeView:   domain.ViewInbox,
+		navIndex:     0,
+		activeView:   domain.ViewToday,
 		focus:        focusNav,
 		width:        80,
 		height:       24,

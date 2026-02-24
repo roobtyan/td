@@ -20,8 +20,18 @@ import (
 func TestLayoutRatio(t *testing.T) {
 	m := NewModel()
 	view := m.View()
-	if !strings.Contains(view, "Inbox") {
-		t.Fatalf("view should contain Inbox, got: %q", view)
+	if !strings.Contains(view, "Today") {
+		t.Fatalf("view should contain Today by default, got: %q", view)
+	}
+}
+
+func TestNewModelShouldDefaultToTodayView(t *testing.T) {
+	m := NewModel()
+	if m.activeView != domain.ViewToday {
+		t.Fatalf("activeView = %s, want %s", m.activeView, domain.ViewToday)
+	}
+	if m.navIndex != 0 {
+		t.Fatalf("navIndex = %d, want 0", m.navIndex)
 	}
 }
 
@@ -628,6 +638,7 @@ func TestUIEditProjectTodayDueAndDelete(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 
 	m = sendTab(m)
 
@@ -668,6 +679,7 @@ func TestEditInputShouldPrefillCurrentTaskTitle(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'e')
 
@@ -689,6 +701,7 @@ func TestProjectInputShouldPrefillCurrentTaskProject(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'P')
 
@@ -711,6 +724,7 @@ func TestProjectInputShouldSelectExistingProjectByJKAndEnter(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'P')
 	m = sendRunes(m, 'j')
@@ -729,6 +743,7 @@ func TestProjectInputShouldCreateNewProjectInInputMode(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'P')
 	m = sendTab(m)
@@ -778,6 +793,7 @@ func TestDueInputShouldPrefillCurrentTaskDue(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'd')
 
@@ -800,6 +816,7 @@ func TestPriorityInputShouldPrefillCurrentTaskPriority(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'y')
 
@@ -818,6 +835,7 @@ func TestUIPriorityShouldUpdateByY(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'y')
 	m = sendBackspace(m)
@@ -835,6 +853,7 @@ func TestProjectRenameShouldPrefillSelectedProjectName(t *testing.T) {
 		projects: []string{"work"},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
@@ -858,6 +877,7 @@ func TestInputShouldAcceptSpaceKeyForDue(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'd')
 	m = sendText(m, "2026-02-25")
@@ -878,6 +898,7 @@ func TestInputShouldAcceptCompactDateTimeForDue(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'd')
 	m = sendText(m, "202602051122")
@@ -899,6 +920,7 @@ func TestUIDeleteTask(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'x')
 	if r.tasks[0].Status != domain.StatusDeleted {
@@ -916,6 +938,7 @@ func TestUIDeleteTaskShouldUndoByZ(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'x')
 	if r.tasks[0].Status != domain.StatusDeleted {
@@ -1019,6 +1042,7 @@ func TestListShouldShowDueInTaskRow(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	m = updated.(Model)
 	view := ansi.Strip(m.View())
@@ -1074,6 +1098,7 @@ func TestProjectAddKeyInNavShouldCreateProject(t *testing.T) {
 		projects: []string{"work"},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'a')
@@ -1092,6 +1117,7 @@ func TestProjectRenameAndDeleteByNavKeys(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
@@ -1128,6 +1154,7 @@ func TestProjectDeleteShouldUndoByZ(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
@@ -1156,6 +1183,7 @@ func TestUndoShouldSupportMultipleStepsForTaskDelete(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 
 	m = sendRunes(m, 'x')
@@ -1212,6 +1240,7 @@ func TestTaskShouldMarkDoneByCInListFocus(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 	m = sendRunes(m, 'c')
 	if r.tasks[0].Status != domain.StatusDone {
@@ -1258,6 +1287,7 @@ func TestProjectShouldMarkAllOpenTasksDoneByCInNav(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
@@ -1315,6 +1345,7 @@ func TestTaskStatusUndoShouldRestoreInboxFromDoneByZ(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	m = sendTab(m)
 
 	m = sendRunes(m, 'c')
@@ -1341,6 +1372,7 @@ func TestProjectDoneByCInNavShouldUndoByZ(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
@@ -1374,6 +1406,7 @@ func TestUndoShouldUseGlobalLatestAcrossProjectStatusAndDelete(t *testing.T) {
 		},
 	}
 	m := NewModelWithRepo(r)
+	m.navIndex = 1
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
 	m = sendRunes(m, 'j')
@@ -1419,6 +1452,7 @@ func TestLongTaskListShouldKeepFooterAndSelectedVisible(t *testing.T) {
 	}
 	r := &fakeTaskRepo{tasks: tasks}
 	m := NewModelWithRepo(r)
+	m = setInboxView(m)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 16})
 	m = updated.(Model)
 	m = sendTab(m)
@@ -1718,6 +1752,12 @@ func (f *fakeTaskRepo) Purge(_ context.Context, ids []int64) error {
 	}
 	f.tasks = out
 	return nil
+}
+
+func setInboxView(m Model) Model {
+	m.activeView = domain.ViewInbox
+	m.reload()
+	return m
 }
 
 func sendRunes(m Model, r ...rune) Model {

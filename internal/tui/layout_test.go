@@ -160,6 +160,51 @@ func TestListPaneShouldNotContainMidResetArtifacts(t *testing.T) {
 	}
 }
 
+func TestSelectedTaskLineShouldNotUseDifferentBackgroundBlock(t *testing.T) {
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(oldProfile)
+	})
+
+	loc := time.Local
+	due := time.Date(2026, 2, 24, 9, 30, 0, 0, loc)
+	tasks := []domain.Task{
+		{ID: 1, Title: "selected-row", Status: domain.StatusTodo, Priority: "P1", DueAt: &due},
+		{ID: 2, Title: "normal-row", Status: domain.StatusTodo, Priority: "P2"},
+	}
+	lines := renderList(tasks, 0, true, 90, 12, domain.ViewInbox, loc)
+	block := strings.Join(lines, "\n")
+	if strings.Contains(block, "31;49;66") {
+		t.Fatalf("selected line should not introduce dark background block, block=%q", block)
+	}
+}
+
+func TestTaskRowShouldAvoidInlineResetArtifacts(t *testing.T) {
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(oldProfile)
+	})
+
+	loc := time.Local
+	due := time.Date(2026, 2, 24, 9, 30, 0, 0, loc)
+	task := domain.Task{
+		ID:       1,
+		Title:    "task-inline-reset",
+		Status:   domain.StatusTodo,
+		Project:  "work",
+		Priority: "P1",
+		DueAt:    &due,
+	}
+	row := renderTaskLine("> ", renderStatusLabel(task.Status), task, domain.ViewToday, loc, 100)
+	if strings.Contains(row, "\x1b[0m") {
+		t.Fatalf("task row should avoid inline reset artifact, row=%q", row)
+	}
+}
+
 func TestRenderBoxShouldKeepFixedHeightWhenContentOverflows(t *testing.T) {
 	content := strings.Repeat("this-line-is-too-long-for-pane-width\n", 24)
 	block := renderBox(listBoxStyle, content, 36, 10)
