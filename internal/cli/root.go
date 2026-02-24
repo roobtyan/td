@@ -29,6 +29,7 @@ func NewRootCmd(cfg config.Config) *cobra.Command {
 	cmd.AddCommand(newUICmd(cfg))
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newUpgradeCmd())
+	cmd.AddCommand(newConfigCmd(cfg))
 	return cmd
 }
 

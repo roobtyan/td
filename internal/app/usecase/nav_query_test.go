@@ -79,6 +79,33 @@ func TestProjectViewShowDoneToggle(t *testing.T) {
 	assertNotContains(t, gotAll, "home-todo")
 }
 
+func TestInboxViewShouldIncludeTodoWithoutProject(t *testing.T) {
+	db := openNavTestDB(t)
+	defer db.Close()
+	if err := sqlite.Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	seedNavTask(t, db, "inbox-a", domain.StatusInbox, "", nil, nil)
+	seedNavTask(t, db, "todo-no-project", domain.StatusTodo, "", nil, nil)
+	seedNavTask(t, db, "todo-with-project", domain.StatusTodo, "work", nil, nil)
+	seedNavTask(t, db, "doing-no-project", domain.StatusDoing, "", nil, nil)
+
+	repo := sqlite.NewTaskRepository(db)
+	uc := NewNavQueryUseCase(repo)
+
+	tasks, err := uc.ListByView(context.Background(), domain.ViewInbox, now, "", false)
+	if err != nil {
+		t.Fatalf("list inbox: %v", err)
+	}
+	got := titles(tasks)
+	assertContains(t, got, "inbox-a")
+	assertContains(t, got, "todo-no-project")
+	assertNotContains(t, got, "todo-with-project")
+	assertNotContains(t, got, "doing-no-project")
+}
+
 func TestLogViewShouldSortByLatestDoneAt(t *testing.T) {
 	db := openNavTestDB(t)
 	defer db.Close()

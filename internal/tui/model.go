@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"td/internal/app/usecase"
+	"td/internal/clipboard"
 	"td/internal/domain"
 	"td/internal/repo"
 )
@@ -47,32 +48,40 @@ type undoAction struct {
 }
 
 type Model struct {
-	navItems     []navItem
-	navIndex     int
-	activeView   domain.View
-	project      string
-	focus        focusArea
-	listCursor   int
-	width        int
-	height       int
-	queryUseCase usecase.NavQueryUseCase
-	clipUseCase  usecase.AddFromClipboardUseCase
-	now          func() time.Time
-	tasks        []domain.Task
-	statusMsg    string
-	todayDone    int
-	todayTotal   int
-	metricTodo   int
-	metricDoing  int
-	metricDone   int
-	metricOver   int
-	inputMode    inputMode
-	inputValue   string
-	inputTarget  string
-	projects     []string
-	showDone     bool
-	showHelp     bool
-	undoStack    []undoAction
+	navItems      []navItem
+	navIndex      int
+	activeView    domain.View
+	project       string
+	focus         focusArea
+	listCursor    int
+	width         int
+	height        int
+	queryUseCase  usecase.NavQueryUseCase
+	clipUseCase   usecase.AddFromClipboardUseCase
+	now           func() time.Time
+	tasks         []domain.Task
+	statusMsg     string
+	todayDone     int
+	todayTotal    int
+	metricTodo    int
+	metricDoing   int
+	metricDone    int
+	metricOver    int
+	inputMode     inputMode
+	inputValue    string
+	inputCursor   int
+	inputTarget   string
+	projects      []string
+	showDone      bool
+	showHelp      bool
+	showAIInput   bool
+	showAIPreview bool
+	aiInputValue  string
+	aiInputCursor int
+	aiPreview     clipboard.ParsedTask
+	aiPreviewRaw  string
+	aiSource      string
+	undoStack     []undoAction
 }
 
 func NewModel() Model {
@@ -85,6 +94,11 @@ func NewModelWithRepo(r repo.TaskRepository) Model {
 		Repo:     r,
 		AIParser: &usecase.AIParseTaskUseCase{},
 	}
+	return m
+}
+
+func (m Model) WithAIParser(parser *usecase.AIParseTaskUseCase) Model {
+	m.clipUseCase.AIParser = parser
 	return m
 }
 
@@ -120,6 +134,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.showAIPreview {
+			m.handleAIPreviewKey(msg)
+			return m, nil
+		}
+		if m.showAIInput {
+			m.handleAIInputKey(msg)
+			return m, nil
+		}
 		if m.inputMode != inputNone {
 			m.handleInputKey(msg)
 			return m, nil
@@ -127,6 +149,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case KeyHelp:
 			m.showHelp = true
+		case KeyAISpace, " ":
+			m.beginAIInput()
 		case KeyQuit:
 			return m, tea.Quit
 		case KeyFocusSwitch:
@@ -182,11 +206,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case KeyClipAdd:
 			if m.clipUseCase.Repo != nil {
-				_, err := m.clipUseCase.AddFromClipboard(context.Background(), "", false)
+				_, err := m.clipUseCase.AddFromClipboard(context.Background(), "", true)
 				if err != nil {
-					m.statusMsg = fmt.Sprintf("clipboard add failed: %v", err)
+					m.statusMsg = fmt.Sprintf("ai parse failed: %v", err)
 				} else {
-					m.statusMsg = "created task from clipboard"
+					m.statusMsg = "created task from ai parse"
 				}
 				m.reload()
 			}
@@ -209,16 +233,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tryBeginProjectRenameFromNav() {
 				return m, nil
 			}
-			if _, ok := m.currentTaskForAction(); ok {
-				m.beginInput(inputEdit, "", "")
+			if task, ok := m.currentTaskForAction(); ok {
+				m.beginInput(inputEdit, task.Title, "")
 			}
 		case KeyProject:
-			if _, ok := m.currentTaskForAction(); ok {
-				m.beginInput(inputTaskProject, "", "")
+			if task, ok := m.currentTaskForAction(); ok {
+				m.beginInput(inputTaskProject, task.Project, "")
 			}
 		case KeyDue:
-			if _, ok := m.currentTaskForAction(); ok {
-				m.beginInput(inputDue, "", "")
+			if task, ok := m.currentTaskForAction(); ok {
+				initial := ""
+				if task.DueAt != nil {
+					initial = formatDue(task.DueAt, m.now().Location())
+				}
+				m.beginInput(inputDue, initial, "")
 			}
 		case KeyDelete:
 			if m.tryDeleteProjectFromNav() {
@@ -289,6 +317,16 @@ func (m Model) View() string {
 	if m.showHelp {
 		dimmed := renderDimmedPage(page, m.width, m.height)
 		modal := renderHelpModal(m.width)
+		return overlayCentered(dimmed, modal, m.width, m.height)
+	}
+	if m.showAIInput {
+		dimmed := renderDimmedPage(page, m.width, m.height)
+		modal := renderAIInputModal(m.width, m.aiInputValue, m.aiInputCursor)
+		return overlayCentered(dimmed, modal, m.width, m.height)
+	}
+	if m.showAIPreview {
+		dimmed := renderDimmedPage(page, m.width, m.height)
+		modal := renderAIPreviewModal(m.width, m.aiPreview, m.aiSource)
 		return overlayCentered(dimmed, modal, m.width, m.height)
 	}
 	return page
@@ -589,37 +627,51 @@ func containsProjectName(projects []string, name string) bool {
 func (m *Model) beginInput(mode inputMode, initial, target string) {
 	m.inputMode = mode
 	m.inputValue = initial
+	m.inputCursor = len([]rune(initial))
 	m.inputTarget = target
 }
 
 func (m *Model) endInput() {
 	m.inputMode = inputNone
 	m.inputValue = ""
+	m.inputCursor = 0
 	m.inputTarget = ""
 }
 
 func (m *Model) handleInputKey(msg tea.KeyMsg) {
-	switch msg.String() {
-	case KeyEsc:
+	switch msg.Type {
+	case tea.KeyEsc:
 		m.statusMsg = "input cancelled"
 		m.endInput()
-	case " ", "space":
-		m.inputValue += " "
-	case KeySelect:
+	case tea.KeyEnter:
 		m.submitInput()
-	case KeyBackspace, KeyBackspace2:
-		runes := []rune(m.inputValue)
-		if len(runes) == 0 {
-			return
+	case tea.KeyLeft, tea.KeyCtrlB:
+		m.moveInputCursor(-1)
+	case tea.KeyRight, tea.KeyCtrlF:
+		m.moveInputCursor(1)
+	case tea.KeyBackspace, tea.KeyCtrlH:
+		m.deleteInputRuneBeforeCursor()
+	case tea.KeySpace:
+		m.insertInputText(" ")
+	case tea.KeyRunes:
+		if len(msg.Runes) > 0 {
+			m.insertInputText(string(msg.Runes))
 		}
-		m.inputValue = string(runes[:len(runes)-1])
 	default:
-		if msg.Type == tea.KeySpace {
-			m.inputValue += " "
-			return
-		}
-		if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-			m.inputValue += string(msg.Runes)
+		switch msg.String() {
+		case KeyEsc:
+			m.statusMsg = "input cancelled"
+			m.endInput()
+		case KeySelect:
+			m.submitInput()
+		case "left":
+			m.moveInputCursor(-1)
+		case "right":
+			m.moveInputCursor(1)
+		case KeyBackspace, KeyBackspace2:
+			m.deleteInputRuneBeforeCursor()
+		case " ", "space":
+			m.insertInputText(" ")
 		}
 	}
 }
@@ -839,6 +891,121 @@ func (m *Model) pushUndo(action undoAction) {
 	m.undoStack = append(m.undoStack, action)
 }
 
+func (m *Model) beginAIInput() {
+	m.showAIInput = true
+	m.showAIPreview = false
+	m.aiInputValue = ""
+	m.aiInputCursor = 0
+	m.aiPreview = clipboard.ParsedTask{}
+	m.aiPreviewRaw = ""
+	m.aiSource = ""
+}
+
+func (m *Model) closeAIInput(reason string) {
+	m.showAIInput = false
+	if strings.TrimSpace(reason) != "" {
+		m.statusMsg = reason
+	}
+}
+
+func (m *Model) closeAIPreview(reason string) {
+	m.showAIPreview = false
+	if strings.TrimSpace(reason) != "" {
+		m.statusMsg = reason
+	}
+}
+
+func (m *Model) handleAIInputKey(msg tea.KeyMsg) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.closeAIInput("ai input cancelled")
+	case tea.KeyEnter:
+		m.submitAIInputPreview()
+	case tea.KeyLeft, tea.KeyCtrlB:
+		m.moveAIInputCursor(-1)
+	case tea.KeyRight, tea.KeyCtrlF:
+		m.moveAIInputCursor(1)
+	case tea.KeyBackspace, tea.KeyCtrlH:
+		m.deleteAIInputRuneBeforeCursor()
+	case tea.KeySpace:
+		m.insertAIInputText(" ")
+	case tea.KeyRunes:
+		if len(msg.Runes) > 0 {
+			m.insertAIInputText(string(msg.Runes))
+		}
+	default:
+		switch msg.String() {
+		case KeyEsc, KeyQuit:
+			m.closeAIInput("ai input cancelled")
+		case KeySelect:
+			m.submitAIInputPreview()
+		case "left":
+			m.moveAIInputCursor(-1)
+		case "right":
+			m.moveAIInputCursor(1)
+		case KeyBackspace, KeyBackspace2:
+			m.deleteAIInputRuneBeforeCursor()
+		case " ", "space":
+			m.insertAIInputText(" ")
+		}
+	}
+}
+
+func (m *Model) submitAIInputPreview() {
+	if m.clipUseCase.Repo == nil {
+		m.closeAIInput("repo not ready")
+		return
+	}
+	text := strings.TrimSpace(m.aiInputValue)
+	if text == "" {
+		m.statusMsg = "ai text is empty"
+		return
+	}
+	parsed, source, err := m.clipUseCase.ParseInput(context.Background(), text, true)
+	if err != nil {
+		m.closeAIInput(fmt.Sprintf("ai parse failed: %v", err))
+		return
+	}
+	m.showAIInput = false
+	m.showAIPreview = true
+	m.aiPreview = parsed
+	m.aiPreviewRaw = text
+	m.aiSource = source
+}
+
+func (m *Model) handleAIPreviewKey(msg tea.KeyMsg) {
+	switch msg.String() {
+	case KeyEsc, KeyQuit:
+		m.closeAIPreview("ai preview cancelled")
+	case "e", "E":
+		m.showAIPreview = false
+		m.showAIInput = true
+		m.aiInputValue = m.aiPreviewRaw
+		m.aiInputCursor = len([]rune(m.aiInputValue))
+	case KeySelect:
+		m.confirmAIPreviewCreate()
+	}
+}
+
+func (m *Model) confirmAIPreviewCreate() {
+	if m.clipUseCase.Repo == nil {
+		m.closeAIPreview("repo not ready")
+		return
+	}
+	task, err := m.clipUseCase.CreateFromParsed(context.Background(), m.aiPreview)
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("create failed: %v", err)
+		return
+	}
+	m.showAIPreview = false
+	if m.aiSource == "ai" {
+		m.statusMsg = fmt.Sprintf("created #%d from ai parse", task.ID)
+	} else {
+		m.statusMsg = fmt.Sprintf("created #%d from fallback parse", task.ID)
+	}
+	m.reload()
+}
+
 func (m *Model) undoLastDelete() {
 	if m.queryUseCase.Repo == nil {
 		m.statusMsg = "repo not ready"
@@ -929,20 +1096,88 @@ func (m *Model) completeCurrentTask() {
 func (m Model) inputPrompt() string {
 	switch m.inputMode {
 	case inputAdd:
-		return "add> " + m.inputValue
+		return "add> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputEdit:
-		return "edit> " + m.inputValue
+		return "edit> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputTaskProject:
-		return "project> " + m.inputValue
+		return "project> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputDue:
-		return "due(YYYY-MM-DD HH:MM)> " + m.inputValue
+		return "due(YYYY-MM-DD HH:MM)> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputProjectCreate:
-		return "project add> " + m.inputValue
+		return "project add> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputProjectRename:
-		return "project rename> " + m.inputValue
+		return "project rename> " + renderCursorAt(m.inputValue, m.inputCursor)
 	default:
 		return m.statusMsg
 	}
+}
+
+func (m *Model) moveInputCursor(delta int) {
+	runes := []rune(m.inputValue)
+	m.inputCursor += delta
+	if m.inputCursor < 0 {
+		m.inputCursor = 0
+	}
+	if m.inputCursor > len(runes) {
+		m.inputCursor = len(runes)
+	}
+}
+
+func (m *Model) insertInputText(text string) {
+	m.inputValue, m.inputCursor = insertTextAtCursor(m.inputValue, m.inputCursor, text)
+}
+
+func (m *Model) deleteInputRuneBeforeCursor() {
+	m.inputValue, m.inputCursor = deleteRuneBeforeCursor(m.inputValue, m.inputCursor)
+}
+
+func (m *Model) moveAIInputCursor(delta int) {
+	runes := []rune(m.aiInputValue)
+	m.aiInputCursor += delta
+	if m.aiInputCursor < 0 {
+		m.aiInputCursor = 0
+	}
+	if m.aiInputCursor > len(runes) {
+		m.aiInputCursor = len(runes)
+	}
+}
+
+func (m *Model) insertAIInputText(text string) {
+	m.aiInputValue, m.aiInputCursor = insertTextAtCursor(m.aiInputValue, m.aiInputCursor, text)
+}
+
+func (m *Model) deleteAIInputRuneBeforeCursor() {
+	m.aiInputValue, m.aiInputCursor = deleteRuneBeforeCursor(m.aiInputValue, m.aiInputCursor)
+}
+
+func insertTextAtCursor(base string, cursor int, inserted string) (string, int) {
+	baseRunes := []rune(base)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(baseRunes) {
+		cursor = len(baseRunes)
+	}
+	insertRunes := []rune(inserted)
+	out := make([]rune, 0, len(baseRunes)+len(insertRunes))
+	out = append(out, baseRunes[:cursor]...)
+	out = append(out, insertRunes...)
+	out = append(out, baseRunes[cursor:]...)
+	return string(out), cursor + len(insertRunes)
+}
+
+func deleteRuneBeforeCursor(base string, cursor int) (string, int) {
+	baseRunes := []rune(base)
+	if cursor <= 0 || len(baseRunes) == 0 {
+		return base, 0
+	}
+	if cursor > len(baseRunes) {
+		cursor = len(baseRunes)
+	}
+	out := make([]rune, 0, len(baseRunes)-1)
+	out = append(out, baseRunes[:cursor-1]...)
+	out = append(out, baseRunes[cursor:]...)
+	return string(out), cursor - 1
 }
 
 func parseDueInputTUI(raw string, loc *time.Location) (time.Time, error) {

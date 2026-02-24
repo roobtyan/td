@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"td/internal/app/usecase"
 	"td/internal/domain"
 	"td/internal/repo"
 )
@@ -142,8 +143,190 @@ func TestHeaderShouldShowBalancedMetrics(t *testing.T) {
 	if !strings.Contains(view, "Time:") {
 		t.Fatalf("header should contain Time line, view=%q", view)
 	}
-	if !strings.Contains(view, "View: Inbox  Items: 0") {
+	if !strings.Contains(view, "View: Inbox  Items: 2") {
 		t.Fatalf("header should contain View/Items line, view=%q", view)
+	}
+}
+
+func TestInboxViewShouldShowTodoWithoutProject(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "todo-no-project", Status: domain.StatusTodo},
+			{ID: 2, Title: "todo-with-project", Status: domain.StatusTodo, Project: "work"},
+			{ID: 3, Title: "inbox-task", Status: domain.StatusInbox},
+		},
+	}
+
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewInbox
+	m.reload()
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "todo-no-project") {
+		t.Fatalf("inbox view should contain todo without project, view=%q", view)
+	}
+	if strings.Contains(view, "todo-with-project") {
+		t.Fatalf("inbox view should not contain project todo, view=%q", view)
+	}
+}
+
+func TestPressPShouldUseAIParseForClipboard(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m.clipUseCase.ReadClipboard = func() (string, error) {
+		return "原始剪贴板内容", nil
+	}
+	m.clipUseCase.AIParser = &usecase.AIParseTaskUseCase{
+		Provider: fakeParseProvider{
+			raw: `{"title":"ai-task-title","priority":"P2"}`,
+		},
+	}
+
+	m = sendRunes(m, 'p')
+	if m.statusMsg != "created task from ai parse" {
+		t.Fatalf("status message = %q, want %q", m.statusMsg, "created task from ai parse")
+	}
+	if len(r.tasks) != 1 {
+		t.Fatalf("task count = %d, want 1", len(r.tasks))
+	}
+	if r.tasks[0].Title != "ai-task-title" {
+		t.Fatalf("created task title = %q, want %q", r.tasks[0].Title, "ai-task-title")
+	}
+}
+
+func TestSpaceShouldOpenAIPreviewAndConfirmCreate(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m.clipUseCase.AIParser = &usecase.AIParseTaskUseCase{
+		Provider: fakeParseProvider{
+			raw: `{"title":"在线推理功能","project":"PP Polaris","priority":"P1","due":"2026-02-25 13:00"}`,
+		},
+	}
+
+	m = sendRunes(m, ' ')
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "AI QUICK INPUT") {
+		t.Fatalf("space should open ai input modal, view=%q", view)
+	}
+
+	m = sendText(m, "在PP Polaris项目下 明天下午一点完成在线推理功能")
+	m = sendEnter(m)
+	view = ansi.Strip(m.View())
+	if !strings.Contains(view, "AI PREVIEW") {
+		t.Fatalf("enter on ai input should open preview modal, view=%q", view)
+	}
+	if !strings.Contains(view, "source") || !strings.Contains(view, "AI") {
+		t.Fatalf("preview should show source AI, view=%q", view)
+	}
+	if !strings.Contains(view, "project") || !strings.Contains(view, "PP Polaris") {
+		t.Fatalf("preview should show project, view=%q", view)
+	}
+	if !strings.Contains(view, "priority") || !strings.Contains(view, "P1") {
+		t.Fatalf("preview should show priority, view=%q", view)
+	}
+	if !strings.Contains(view, "due") || !strings.Contains(view, "2026-02-25 13:00") {
+		t.Fatalf("preview should show due, view=%q", view)
+	}
+
+	m = sendEnter(m)
+	if len(r.tasks) != 1 {
+		t.Fatalf("task count = %d, want 1", len(r.tasks))
+	}
+	if r.tasks[0].Project != "PP Polaris" {
+		t.Fatalf("task project = %q, want %q", r.tasks[0].Project, "PP Polaris")
+	}
+	if r.tasks[0].Priority != "P1" {
+		t.Fatalf("task priority = %q, want %q", r.tasks[0].Priority, "P1")
+	}
+	if r.tasks[0].DueAt == nil {
+		t.Fatalf("task due should not be nil")
+	}
+	if !strings.Contains(m.statusMsg, "from ai parse") {
+		t.Fatalf("status message = %q, want ai source hint", m.statusMsg)
+	}
+}
+
+func TestFooterInputShouldShowCursor(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'a')
+	m = sendText(m, "abc")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "add> abc|") {
+		t.Fatalf("input footer should show cursor marker, view=%q", view)
+	}
+}
+
+func TestAISpaceInputModalShouldShowCursor(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, ' ')
+	m = sendText(m, "abc")
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "abc|") {
+		t.Fatalf("ai input modal should show cursor marker, view=%q", view)
+	}
+}
+
+func TestFooterInputShouldSupportLeftRightMoveAndInsert(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'a')
+	m = sendText(m, "abc")
+	m = sendLeft(m)
+	m = sendRunes(m, 'X')
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "add> abX|c") {
+		t.Fatalf("input footer should support cursor move and mid insert, view=%q", view)
+	}
+}
+
+func TestAISpaceInputModalShouldSupportLeftRightMoveAndInsert(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, ' ')
+	m = sendText(m, "abc")
+	m = sendLeft(m)
+	m = sendRunes(m, 'X')
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "abX|c") {
+		t.Fatalf("ai input modal should support cursor move and mid insert, view=%q", view)
+	}
+}
+
+func TestFooterInputShouldSupportCtrlBFCursorMove(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'a')
+	m = sendText(m, "abc")
+	m = sendCtrlB(m)
+	m = sendRunes(m, 'X')
+	m = sendCtrlF(m)
+	m = sendRunes(m, 'Y')
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "add> abXcY|") {
+		t.Fatalf("input footer should support ctrl+b/ctrl+f cursor move, view=%q", view)
+	}
+}
+
+func TestAISpaceInputModalShouldSupportCtrlBFCursorMove(t *testing.T) {
+	r := &fakeTaskRepo{}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, ' ')
+	m = sendText(m, "abc")
+	m = sendCtrlB(m)
+	m = sendRunes(m, 'X')
+	m = sendCtrlF(m)
+	m = sendRunes(m, 'Y')
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "abXcY|") {
+		t.Fatalf("ai input should support ctrl+b/ctrl+f cursor move, view=%q", view)
 	}
 }
 
@@ -416,6 +599,9 @@ func TestUIEditProjectTodayDueAndDelete(t *testing.T) {
 	m = sendTab(m)
 
 	m = sendRunes(m, 'e')
+	for i := 0; i < len("task a"); i++ {
+		m = sendBackspace(m)
+	}
 	m = sendText(m, "task updated")
 	m = sendEnter(m)
 	if r.tasks[0].Title != "task updated" {
@@ -439,6 +625,92 @@ func TestUIEditProjectTodayDueAndDelete(t *testing.T) {
 	m = sendRunes(m, 't')
 	if r.tasks[0].Status != domain.StatusDoing {
 		t.Fatalf("status = %s, want %s", r.tasks[0].Status, domain.StatusDoing)
+	}
+}
+
+func TestEditInputShouldPrefillCurrentTaskTitle(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'e')
+
+	if m.inputMode != inputEdit {
+		t.Fatalf("inputMode = %v, want %v", m.inputMode, inputEdit)
+	}
+	if m.inputValue != "task a" {
+		t.Fatalf("inputValue = %q, want %q", m.inputValue, "task a")
+	}
+	if m.inputCursor != len([]rune("task a")) {
+		t.Fatalf("inputCursor = %d, want %d", m.inputCursor, len([]rune("task a")))
+	}
+}
+
+func TestProjectInputShouldPrefillCurrentTaskProject(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'P')
+
+	if m.inputMode != inputTaskProject {
+		t.Fatalf("inputMode = %v, want %v", m.inputMode, inputTaskProject)
+	}
+	if m.inputValue != "work" {
+		t.Fatalf("inputValue = %q, want %q", m.inputValue, "work")
+	}
+	if m.inputCursor != len([]rune("work")) {
+		t.Fatalf("inputCursor = %d, want %d", m.inputCursor, len([]rune("work")))
+	}
+}
+
+func TestDueInputShouldPrefillCurrentTaskDue(t *testing.T) {
+	due := time.Date(2026, 2, 25, 18, 0, 0, 0, time.Local)
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, DueAt: &due},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'd')
+
+	want := due.In(time.Local).Format("2006-01-02 15:04")
+	if m.inputMode != inputDue {
+		t.Fatalf("inputMode = %v, want %v", m.inputMode, inputDue)
+	}
+	if m.inputValue != want {
+		t.Fatalf("inputValue = %q, want %q", m.inputValue, want)
+	}
+	if m.inputCursor != len([]rune(want)) {
+		t.Fatalf("inputCursor = %d, want %d", m.inputCursor, len([]rune(want)))
+	}
+}
+
+func TestProjectRenameShouldPrefillSelectedProjectName(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'e')
+
+	if m.inputMode != inputProjectRename {
+		t.Fatalf("inputMode = %v, want %v", m.inputMode, inputProjectRename)
+	}
+	if m.inputValue != "work" {
+		t.Fatalf("inputValue = %q, want %q", m.inputValue, "work")
+	}
+	if m.inputCursor != len([]rune("work")) {
+		t.Fatalf("inputCursor = %d, want %d", m.inputCursor, len([]rune("work")))
 	}
 }
 
@@ -1142,6 +1414,35 @@ func sendTab(m Model) Model {
 func sendBackspace(m Model) Model {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	return updated.(Model)
+}
+
+func sendLeft(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	return updated.(Model)
+}
+
+func sendRight(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	return updated.(Model)
+}
+
+func sendCtrlB(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlB})
+	return updated.(Model)
+}
+
+func sendCtrlF(m Model) Model {
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	return updated.(Model)
+}
+
+type fakeParseProvider struct {
+	raw string
+	err error
+}
+
+func (f fakeParseProvider) ParseTask(_ context.Context, _ string) (string, error) {
+	return f.raw, f.err
 }
 
 func containsString(items []string, target string) bool {

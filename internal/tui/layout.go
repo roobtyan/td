@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"td/internal/clipboard"
 	"td/internal/domain"
 )
 
@@ -254,15 +255,101 @@ func renderHelpModal(width int) string {
 		renderHelpLine("h", "toggle done in project"),
 		renderHelpLine("r", "restore selected in trash"),
 		renderHelpLine("X", "purge all in trash"),
-		renderHelpLine("p / Ctrl+a", "clip add / ai parse"),
+		renderHelpLine("Space", "ai input + preview"),
+		renderHelpLine("p / Ctrl+a", "ai parse clipboard"),
 		"",
 		helpHintStyle.Render("press ? / q / esc to close"),
 	}
 	return renderBox(helpModalBoxStyle, joinLines(lines), modalWidth, 0)
 }
 
+func renderAIInputModal(width int, input string, cursor int) string {
+	modalWidth := width - 12
+	if modalWidth > 90 {
+		modalWidth = 90
+	}
+	if modalWidth < 48 {
+		modalWidth = width - 4
+	}
+	if modalWidth < 36 {
+		modalWidth = 36
+	}
+
+	line := renderCursorAt(input, cursor)
+	lines := []string{
+		helpTitleStyle.Render("AI QUICK INPUT"),
+		"",
+		renderHelpLine("text", truncateLineForPane(line, modalWidth-8)),
+		"",
+		helpHintStyle.Render("Enter preview  esc cancel"),
+	}
+	return renderBox(helpModalBoxStyle, joinLines(lines), modalWidth, 0)
+}
+
+func renderAIPreviewModal(width int, parsed clipboard.ParsedTask, source string) string {
+	modalWidth := width - 12
+	if modalWidth > 92 {
+		modalWidth = 92
+	}
+	if modalWidth < 52 {
+		modalWidth = width - 4
+	}
+	if modalWidth < 40 {
+		modalWidth = 40
+	}
+
+	sourceLabel := "Fallback"
+	if strings.TrimSpace(strings.ToLower(source)) == "ai" {
+		sourceLabel = "AI"
+	}
+	title := strings.TrimSpace(parsed.Title)
+	if title == "" {
+		title = "-"
+	}
+	project := strings.TrimSpace(parsed.Project)
+	if project == "" {
+		project = "-"
+	}
+	due := strings.TrimSpace(parsed.Due)
+	if due == "" {
+		due = "-"
+	}
+	priority := strings.TrimSpace(parsed.Priority)
+	if priority == "" {
+		priority = "P2"
+	}
+
+	lines := []string{
+		helpTitleStyle.Render("AI PREVIEW"),
+		"",
+		renderHelpLine("source", sourceLabel),
+		renderHelpLine("todo", truncateLineForPane(title, modalWidth-10)),
+		renderHelpLine("project", truncateLineForPane(project, modalWidth-10)),
+		renderHelpLine("due", due),
+		renderHelpLine("priority", priority),
+		"",
+		helpHintStyle.Render("Enter confirm  e edit  esc cancel"),
+	}
+	return renderBox(helpModalBoxStyle, joinLines(lines), modalWidth, 0)
+}
+
 func renderHelpLine(keys, desc string) string {
 	return padRight(keys, 14) + " " + desc
+}
+
+func renderCursorAt(text string, cursor int) string {
+	runes := []rune(text)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	out := make([]rune, 0, len(runes)+1)
+	out = append(out, runes[:cursor]...)
+	out = append(out, '|')
+	out = append(out, runes[cursor:]...)
+	return string(out)
 }
 
 func renderDimmedPage(page string, width, height int) string {

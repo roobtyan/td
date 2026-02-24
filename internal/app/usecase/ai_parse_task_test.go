@@ -22,6 +22,28 @@ func TestParseTaskFallback(t *testing.T) {
 	}
 }
 
+func TestParseTaskWithSource(t *testing.T) {
+	uc := AIParseTaskUseCase{
+		Provider: fakeParseProvider{
+			raw: `{"title":"AI title","project":"AI Project","priority":"P2"}`,
+		},
+	}
+
+	got, source, err := uc.ParseTaskWithSource(context.Background(), "Buy milk")
+	if err != nil {
+		t.Fatalf("parse task with source: %v", err)
+	}
+	if source != "ai" {
+		t.Fatalf("source = %q, want %q", source, "ai")
+	}
+	if got.Title != "AI title" {
+		t.Fatalf("title = %q, want %q", got.Title, "AI title")
+	}
+	if got.Project != "AI Project" {
+		t.Fatalf("project = %q, want %q", got.Project, "AI Project")
+	}
+}
+
 type fakeParseProvider struct {
 	raw string
 	err error

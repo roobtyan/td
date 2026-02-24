@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"td/internal/domain"
@@ -68,7 +69,10 @@ func (u NavQueryUseCase) ListByView(ctx context.Context, view domain.View, now t
 func (u NavQueryUseCase) matchView(task domain.Task, view domain.View, now time.Time, project string, includeDone bool) bool {
 	switch view {
 	case domain.ViewInbox:
-		return task.Status == domain.StatusInbox
+		if task.Status == domain.StatusInbox {
+			return true
+		}
+		return task.Status == domain.StatusTodo && strings.TrimSpace(task.Project) == ""
 	case domain.ViewToday:
 		return isTodayTask(task, now)
 	case domain.ViewLog:

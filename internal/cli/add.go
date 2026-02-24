@@ -49,7 +49,7 @@ func newAddCmd(cfg config.Config) *cobra.Command {
 			if fromClip {
 				var aiParser *usecase.AIParseTaskUseCase
 				if useAI {
-					aiParser = &usecase.AIParseTaskUseCase{}
+					aiParser = newAIParseTaskUseCase(cfg)
 				}
 				uc := usecase.AddFromClipboardUseCase{
 					Repo:     repo,

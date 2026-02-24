@@ -14,19 +14,24 @@ type AIParseTaskUseCase struct {
 }
 
 func (u AIParseTaskUseCase) ParseTask(ctx context.Context, input string) (clipboard.ParsedTask, error) {
+	parsed, _, err := u.ParseTaskWithSource(ctx, input)
+	return parsed, err
+}
+
+func (u AIParseTaskUseCase) ParseTaskWithSource(ctx context.Context, input string) (clipboard.ParsedTask, string, error) {
 	fallback := clipboard.ParseByRule(input)
 	if u.Provider == nil {
-		return fallback, nil
+		return fallback, "fallback", nil
 	}
 
 	sanitized := ai.RedactInput(input)
 	raw, err := u.Provider.ParseTask(ctx, sanitized)
 	if err != nil {
-		return fallback, nil
+		return fallback, "fallback", nil
 	}
 	payload, err := schema.DecodeParseTaskJSON(raw)
 	if err != nil {
-		return fallback, nil
+		return fallback, "fallback", nil
 	}
 
 	parsed := clipboard.ParsedTask{
@@ -34,10 +39,11 @@ func (u AIParseTaskUseCase) ParseTask(ctx context.Context, input string) (clipbo
 		Notes:    strings.TrimSpace(payload.Notes),
 		Project:  strings.TrimSpace(payload.Project),
 		Priority: strings.TrimSpace(payload.Priority),
+		Due:      strings.TrimSpace(payload.Due),
 		Links:    payload.Links,
 	}
 	if parsed.Title == "" {
-		return fallback, nil
+		return fallback, "fallback", nil
 	}
 	if parsed.Notes == "" {
 		parsed.Notes = fallback.Notes
@@ -48,5 +54,5 @@ func (u AIParseTaskUseCase) ParseTask(ctx context.Context, input string) (clipbo
 	if len(parsed.Links) == 0 {
 		parsed.Links = fallback.Links
 	}
-	return parsed, nil
+	return parsed, "ai", nil
 }

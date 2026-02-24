@@ -15,6 +15,7 @@ const (
 	KeyRestore     = "r"
 	KeyToggleDone  = "h"
 	KeyPurgeTrash  = "X"
+	KeyAISpace     = "space"
 	KeyClipAdd     = "p"
 	KeyClipAddAI   = "ctrl+a"
 	KeyEsc         = "esc"

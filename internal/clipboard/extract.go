@@ -12,6 +12,7 @@ type ParsedTask struct {
 	Notes    string
 	Project  string
 	Priority string
+	Due      string
 	Links    []string
 }
 

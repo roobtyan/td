@@ -11,6 +11,7 @@ type ParseTaskPayload struct {
 	Notes    string   `json:"notes"`
 	Project  string   `json:"project"`
 	Priority string   `json:"priority"`
+	Due      string   `json:"due"`
 	Links    []string `json:"links"`
 }
 

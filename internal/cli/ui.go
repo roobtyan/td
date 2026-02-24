@@ -19,8 +19,9 @@ func newUICmd(cfg config.Config) *cobra.Command {
 			}
 			defer closeDB(closer)
 
+			model := tui.NewModelWithRepo(repo).WithAIParser(newAIParseTaskUseCase(cfg))
 			program := tea.NewProgram(
-				tui.NewModelWithRepo(repo),
+				model,
 				tea.WithAltScreen(),
 			)
 			_, err = program.Run()
