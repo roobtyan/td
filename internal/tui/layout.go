@@ -248,7 +248,7 @@ func renderHelpModal(width int) string {
 		renderHelpLine("e", "edit title"),
 		renderHelpLine("x", "delete task / project"),
 		renderHelpLine("c", "mark done"),
-		renderHelpLine("z", "undo last delete"),
+		renderHelpLine("z", "undo last action"),
 		renderHelpLine("P", "set project"),
 		renderHelpLine("t", "mark today"),
 		renderHelpLine("d", "set due"),

@@ -32,6 +32,10 @@ func (u UpdateTaskUseCase) SetDueAt(ctx context.Context, id int64, dueAt *time.T
 	return u.Repo.UpdateDueAt(ctx, id, dueAt)
 }
 
+func (u UpdateTaskUseCase) SetStatus(ctx context.Context, id int64, status domain.Status) error {
+	return u.Repo.SetStatus(ctx, id, status)
+}
+
 func (u UpdateTaskUseCase) MarkToday(ctx context.Context, ids []int64) error {
 	return u.Repo.MarkDoing(ctx, ids)
 }

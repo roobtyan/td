@@ -50,6 +50,18 @@ func TestUpdateTaskUseCaseSetDueAt(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskUseCaseSetStatus(t *testing.T) {
+	stub := &updateTaskRepoStub{}
+	uc := UpdateTaskUseCase{Repo: stub}
+
+	if err := uc.SetStatus(context.Background(), 9, domain.StatusDoing); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if stub.statusID != 9 || stub.status != domain.StatusDoing {
+		t.Fatalf("set status = (id=%d, status=%s), want (9, %s)", stub.statusID, stub.status, domain.StatusDoing)
+	}
+}
+
 func TestUpdateTaskUseCaseMarkProjectDone(t *testing.T) {
 	stub := &updateTaskRepoStub{
 		tasks: []domain.Task{
@@ -79,6 +91,8 @@ type updateTaskRepoStub struct {
 	project      string
 	dueID        int64
 	dueAt        *time.Time
+	statusID     int64
+	status       domain.Status
 	markDoingIDs []int64
 	markDoneIDs  []int64
 	tasks        []domain.Task
@@ -132,6 +146,12 @@ func (s *updateTaskRepoStub) UpdateProject(_ context.Context, id int64, project 
 func (s *updateTaskRepoStub) UpdateDueAt(_ context.Context, id int64, dueAt *time.Time) error {
 	s.dueID = id
 	s.dueAt = dueAt
+	return nil
+}
+
+func (s *updateTaskRepoStub) SetStatus(_ context.Context, id int64, status domain.Status) error {
+	s.statusID = id
+	s.status = status
 	return nil
 }
 

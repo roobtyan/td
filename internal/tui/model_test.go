@@ -670,6 +670,73 @@ func TestProjectInputShouldPrefillCurrentTaskProject(t *testing.T) {
 	}
 }
 
+func TestProjectInputShouldSelectExistingProjectByJKAndEnter(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"alpha", "beta"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'P')
+	m = sendRunes(m, 'j')
+	m = sendEnter(m)
+
+	if r.tasks[0].Project != "alpha" {
+		t.Fatalf("project = %q, want %q", r.tasks[0].Project, "alpha")
+	}
+}
+
+func TestProjectInputShouldCreateNewProjectInInputMode(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"alpha"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+	m = sendRunes(m, 'P')
+	m = sendTab(m)
+	m = sendText(m, "newproj")
+	m = sendEnter(m)
+
+	if r.tasks[0].Project != "newproj" {
+		t.Fatalf("project = %q, want %q", r.tasks[0].Project, "newproj")
+	}
+	if !containsString(r.projects, "newproj") {
+		t.Fatalf("projects = %v, want contains newproj", r.projects)
+	}
+}
+
+func TestProjectInputShouldClearProjectBySelectingNone(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"alpha"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, Project: "alpha"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewProject
+	m.project = "alpha"
+	m.reload()
+	m = sendTab(m)
+	m = sendRunes(m, 'P')
+	m = sendRunes(m, 'k')
+	if !m.projectSelectMode {
+		t.Fatalf("projectSelectMode = false, want true")
+	}
+	if got := m.currentProjectOption(); got != projectNoneOption {
+		t.Fatalf("selected option = %q, want %q", got, projectNoneOption)
+	}
+	m = sendEnter(m)
+
+	if r.tasks[0].Project != "" {
+		t.Fatalf("project = %q, want empty", r.tasks[0].Project)
+	}
+}
+
 func TestDueInputShouldPrefillCurrentTaskDue(t *testing.T) {
 	due := time.Date(2026, 2, 25, 18, 0, 0, 0, time.Local)
 	r := &fakeTaskRepo{
@@ -1108,6 +1175,140 @@ func TestProjectShouldMarkAllOpenTasksDoneByCInNav(t *testing.T) {
 	}
 }
 
+func TestTaskStatusShouldUndoTodoDoingDoneChainByZ(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusTodo, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m.activeView = domain.ViewProject
+	m.project = "work"
+	m.reload()
+	m = sendTab(m)
+
+	m = sendRunes(m, 't')
+	if r.tasks[0].Status != domain.StatusDoing {
+		t.Fatalf("status after t = %s, want %s", r.tasks[0].Status, domain.StatusDoing)
+	}
+
+	m = sendRunes(m, 'c')
+	if r.tasks[0].Status != domain.StatusDone {
+		t.Fatalf("status after c = %s, want %s", r.tasks[0].Status, domain.StatusDone)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusDoing {
+		t.Fatalf("status after first z = %s, want %s", r.tasks[0].Status, domain.StatusDoing)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusTodo {
+		t.Fatalf("status after second z = %s, want %s", r.tasks[0].Status, domain.StatusTodo)
+	}
+}
+
+func TestTaskStatusUndoShouldRestoreInboxFromDoneByZ(t *testing.T) {
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{ID: 1, Title: "task a", Status: domain.StatusInbox},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendTab(m)
+
+	m = sendRunes(m, 'c')
+	if r.tasks[0].Status != domain.StatusDone {
+		t.Fatalf("status after c = %s, want %s", r.tasks[0].Status, domain.StatusDone)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusInbox {
+		t.Fatalf("status after z = %s, want %s", r.tasks[0].Status, domain.StatusInbox)
+	}
+}
+
+func TestProjectDoneByCInNavShouldUndoByZ(t *testing.T) {
+	now := time.Date(2026, 2, 23, 20, 0, 0, 0, time.Local)
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "a", Status: domain.StatusInbox, Project: "work"},
+			{ID: 2, Title: "b", Status: domain.StatusTodo, Project: "work"},
+			{ID: 3, Title: "c", Status: domain.StatusDoing, Project: "work"},
+			{ID: 4, Title: "d", Status: domain.StatusDone, Project: "work", DoneAt: &now},
+			{ID: 5, Title: "e", Status: domain.StatusTodo, Project: "home"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'c')
+
+	if r.tasks[0].Status != domain.StatusDone || r.tasks[1].Status != domain.StatusDone || r.tasks[2].Status != domain.StatusDone {
+		t.Fatalf("work open tasks should be done before undo")
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusInbox {
+		t.Fatalf("task1 status after z = %s, want %s", r.tasks[0].Status, domain.StatusInbox)
+	}
+	if r.tasks[1].Status != domain.StatusTodo {
+		t.Fatalf("task2 status after z = %s, want %s", r.tasks[1].Status, domain.StatusTodo)
+	}
+	if r.tasks[2].Status != domain.StatusDoing {
+		t.Fatalf("task3 status after z = %s, want %s", r.tasks[2].Status, domain.StatusDoing)
+	}
+	if r.tasks[3].Status != domain.StatusDone {
+		t.Fatalf("task4 status after z = %s, want %s", r.tasks[3].Status, domain.StatusDone)
+	}
+}
+
+func TestUndoShouldUseGlobalLatestAcrossProjectStatusAndDelete(t *testing.T) {
+	r := &fakeTaskRepo{
+		projects: []string{"work"},
+		tasks: []domain.Task{
+			{ID: 1, Title: "a", Status: domain.StatusTodo, Project: "work"},
+			{ID: 2, Title: "b", Status: domain.StatusDoing, Project: "work"},
+		},
+	}
+	m := NewModelWithRepo(r)
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+	m = sendRunes(m, 'j')
+
+	m = sendRunes(m, 'c')
+	if r.tasks[0].Status != domain.StatusDone || r.tasks[1].Status != domain.StatusDone {
+		t.Fatalf("statuses after c = %s/%s, want done/done", r.tasks[0].Status, r.tasks[1].Status)
+	}
+
+	m = sendRunes(m, 'x')
+	if containsString(r.projects, "work") {
+		t.Fatalf("project should be deleted")
+	}
+	if r.tasks[0].Project != "" || r.tasks[1].Project != "" {
+		t.Fatalf("project field should be detached after delete, got %q/%q", r.tasks[0].Project, r.tasks[1].Project)
+	}
+
+	m = sendRunes(m, 'z')
+	if !containsString(r.projects, "work") {
+		t.Fatalf("first z should undo delete project")
+	}
+	if r.tasks[0].Project != "work" || r.tasks[1].Project != "work" {
+		t.Fatalf("first z should restore project relation, got %q/%q", r.tasks[0].Project, r.tasks[1].Project)
+	}
+	if r.tasks[0].Status != domain.StatusDone || r.tasks[1].Status != domain.StatusDone {
+		t.Fatalf("first z should not undo status yet, got %s/%s", r.tasks[0].Status, r.tasks[1].Status)
+	}
+
+	m = sendRunes(m, 'z')
+	if r.tasks[0].Status != domain.StatusTodo || r.tasks[1].Status != domain.StatusDoing {
+		t.Fatalf("second z should undo project status operation, got %s/%s", r.tasks[0].Status, r.tasks[1].Status)
+	}
+}
+
 func TestLongTaskListShouldKeepFooterAndSelectedVisible(t *testing.T) {
 	tasks := make([]domain.Task, 0, 80)
 	for i := 1; i <= 80; i++ {
@@ -1318,11 +1519,29 @@ func (f *fakeTaskRepo) UpdateDueAt(_ context.Context, id int64, dueAt *time.Time
 	return domain.ErrTaskNotFound
 }
 
+func (f *fakeTaskRepo) SetStatus(_ context.Context, id int64, status domain.Status) error {
+	for i := range f.tasks {
+		if f.tasks[i].ID == id {
+			f.tasks[i].Status = status
+			if status == domain.StatusDone {
+				now := time.Now().UTC()
+				f.tasks[i].DoneAt = &now
+			} else {
+				f.tasks[i].DoneAt = nil
+			}
+			return nil
+		}
+	}
+	return domain.ErrTaskNotFound
+}
+
 func (f *fakeTaskRepo) MarkDone(_ context.Context, ids []int64) error {
 	for _, id := range ids {
 		for i := range f.tasks {
 			if f.tasks[i].ID == id {
 				f.tasks[i].Status = domain.StatusDone
+				now := time.Now().UTC()
+				f.tasks[i].DoneAt = &now
 			}
 		}
 	}
@@ -1334,6 +1553,7 @@ func (f *fakeTaskRepo) MarkDoing(_ context.Context, ids []int64) error {
 		for i := range f.tasks {
 			if f.tasks[i].ID == id {
 				f.tasks[i].Status = domain.StatusDoing
+				f.tasks[i].DoneAt = nil
 			}
 		}
 	}
@@ -1345,6 +1565,7 @@ func (f *fakeTaskRepo) Reopen(_ context.Context, ids []int64) error {
 		for i := range f.tasks {
 			if f.tasks[i].ID == id {
 				f.tasks[i].Status = domain.StatusTodo
+				f.tasks[i].DoneAt = nil
 			}
 		}
 	}
@@ -1367,6 +1588,7 @@ func (f *fakeTaskRepo) Restore(_ context.Context, ids []int64) error {
 		for i := range f.tasks {
 			if f.tasks[i].ID == id {
 				f.tasks[i].Status = domain.StatusTodo
+				f.tasks[i].DoneAt = nil
 			}
 		}
 	}

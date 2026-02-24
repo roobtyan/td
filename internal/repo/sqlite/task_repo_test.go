@@ -241,3 +241,50 @@ func TestRestoreShouldMoveTaskWithoutProjectToInbox(t *testing.T) {
 		t.Fatalf("status = %s, want %s", task.Status, domain.StatusInbox)
 	}
 }
+
+func TestSetStatusShouldUpdateStatusAndDoneAt(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	if err := Migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	repo := NewTaskRepository(db)
+	ctx := context.Background()
+
+	id, err := repo.Create(ctx, domain.Task{
+		Title:  "status task",
+		Status: domain.StatusInbox,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	if err := repo.SetStatus(ctx, id, domain.StatusDone); err != nil {
+		t.Fatalf("set status done: %v", err)
+	}
+	task, err := repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get task after set done: %v", err)
+	}
+	if task.Status != domain.StatusDone {
+		t.Fatalf("status = %s, want %s", task.Status, domain.StatusDone)
+	}
+	if task.DoneAt == nil {
+		t.Fatalf("done_at should not be nil when status is done")
+	}
+
+	if err := repo.SetStatus(ctx, id, domain.StatusDoing); err != nil {
+		t.Fatalf("set status doing: %v", err)
+	}
+	task, err = repo.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("get task after set doing: %v", err)
+	}
+	if task.Status != domain.StatusDoing {
+		t.Fatalf("status = %s, want %s", task.Status, domain.StatusDoing)
+	}
+	if task.DoneAt != nil {
+		t.Fatalf("done_at should be nil when status is not done")
+	}
+}

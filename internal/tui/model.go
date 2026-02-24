@@ -39,50 +39,63 @@ type undoKind int
 const (
 	undoTaskDelete undoKind = iota
 	undoProjectDelete
+	undoTaskStatus
 )
 
+type taskStatusChange struct {
+	taskID int64
+	from   domain.Status
+	to     domain.Status
+}
+
 type undoAction struct {
-	kind    undoKind
-	taskIDs []int64
-	project string
+	kind          undoKind
+	taskIDs       []int64
+	project       string
+	statusChanges []taskStatusChange
 }
 
 type Model struct {
-	navItems      []navItem
-	navIndex      int
-	activeView    domain.View
-	project       string
-	focus         focusArea
-	listCursor    int
-	width         int
-	height        int
-	queryUseCase  usecase.NavQueryUseCase
-	clipUseCase   usecase.AddFromClipboardUseCase
-	now           func() time.Time
-	tasks         []domain.Task
-	statusMsg     string
-	todayDone     int
-	todayTotal    int
-	metricTodo    int
-	metricDoing   int
-	metricDone    int
-	metricOver    int
-	inputMode     inputMode
-	inputValue    string
-	inputCursor   int
-	inputTarget   string
-	projects      []string
-	showDone      bool
-	showHelp      bool
-	showAIInput   bool
-	showAIPreview bool
-	aiInputValue  string
-	aiInputCursor int
-	aiPreview     clipboard.ParsedTask
-	aiPreviewRaw  string
-	aiSource      string
-	undoStack     []undoAction
+	navItems           []navItem
+	navIndex           int
+	activeView         domain.View
+	project            string
+	focus              focusArea
+	listCursor         int
+	width              int
+	height             int
+	queryUseCase       usecase.NavQueryUseCase
+	clipUseCase        usecase.AddFromClipboardUseCase
+	now                func() time.Time
+	tasks              []domain.Task
+	statusMsg          string
+	todayDone          int
+	todayTotal         int
+	metricTodo         int
+	metricDoing        int
+	metricDone         int
+	metricOver         int
+	inputMode          inputMode
+	inputValue         string
+	inputCursor        int
+	inputTarget        string
+	projectSelectMode  bool
+	projectOptions     []string
+	projectSelectIndex int
+	projects           []string
+	showDone           bool
+	showHelp           bool
+	showAIInput        bool
+	showAIPreview      bool
+	aiInputValue       string
+	aiInputCursor      int
+	aiPreview          clipboard.ParsedTask
+	aiPreviewRaw       string
+	aiSource           string
+	undoStack          []undoAction
 }
+
+const projectNoneOption = "[none]"
 
 func NewModel() Model {
 	return NewModelWithQuery(usecase.NavQueryUseCase{})
@@ -238,7 +251,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case KeyProject:
 			if task, ok := m.currentTaskForAction(); ok {
-				m.beginInput(inputTaskProject, task.Project, "")
+				m.beginTaskProjectInput(task.Project)
 			}
 		case KeyDue:
 			if task, ok := m.currentTaskForAction(); ok {
@@ -587,17 +600,39 @@ func (m *Model) tryCompleteProjectFromNav() bool {
 		m.statusMsg = "select a project"
 		return true
 	}
+	tasks, err := m.queryUseCase.Repo.List(context.Background(), repo.TaskListFilter{Project: row.Project})
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("load project tasks failed: %v", err)
+		return true
+	}
+	ids := make([]int64, 0, len(tasks))
+	changes := make([]taskStatusChange, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Status == domain.StatusInbox || task.Status == domain.StatusTodo || task.Status == domain.StatusDoing {
+			ids = append(ids, task.ID)
+			changes = append(changes, taskStatusChange{
+				taskID: task.ID,
+				from:   task.Status,
+				to:     domain.StatusDone,
+			})
+		}
+	}
+	if len(ids) == 0 {
+		m.statusMsg = fmt.Sprintf("project %s has no open task", row.Project)
+		return true
+	}
+
 	uc := usecase.UpdateTaskUseCase{Repo: m.queryUseCase.Repo}
-	done, err := uc.MarkProjectDone(context.Background(), row.Project)
+	err = uc.MarkDone(context.Background(), ids)
 	if err != nil {
 		m.statusMsg = fmt.Sprintf("project done failed: %v", err)
 		return true
 	}
-	if done == 0 {
-		m.statusMsg = fmt.Sprintf("project %s has no open task", row.Project)
-	} else {
-		m.statusMsg = fmt.Sprintf("done %d task(s) in %s", done, row.Project)
-	}
+	m.pushUndo(undoAction{
+		kind:          undoTaskStatus,
+		statusChanges: changes,
+	})
+	m.statusMsg = fmt.Sprintf("done %d task(s) in %s (z undo)", len(ids), row.Project)
 	m.reload()
 	return true
 }
@@ -629,6 +664,24 @@ func (m *Model) beginInput(mode inputMode, initial, target string) {
 	m.inputValue = initial
 	m.inputCursor = len([]rune(initial))
 	m.inputTarget = target
+	m.projectSelectMode = false
+	m.projectOptions = nil
+	m.projectSelectIndex = 0
+}
+
+func (m *Model) beginTaskProjectInput(currentProject string) {
+	m.beginInput(inputTaskProject, currentProject, "")
+	m.projectOptions = buildProjectOptions(m.projects, currentProject)
+	m.projectSelectMode = true
+	m.projectSelectIndex = 0
+	if currentProject != "" {
+		for i, opt := range m.projectOptions {
+			if opt == currentProject {
+				m.projectSelectIndex = i
+				break
+			}
+		}
+	}
 }
 
 func (m *Model) endInput() {
@@ -636,9 +689,16 @@ func (m *Model) endInput() {
 	m.inputValue = ""
 	m.inputCursor = 0
 	m.inputTarget = ""
+	m.projectSelectMode = false
+	m.projectOptions = nil
+	m.projectSelectIndex = 0
 }
 
 func (m *Model) handleInputKey(msg tea.KeyMsg) {
+	if m.inputMode == inputTaskProject && m.handleTaskProjectInputKey(msg) {
+		return
+	}
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.statusMsg = "input cancelled"
@@ -674,6 +734,73 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) {
 			m.insertInputText(" ")
 		}
 	}
+}
+
+func (m *Model) handleTaskProjectInputKey(msg tea.KeyMsg) bool {
+	if !m.projectSelectMode {
+		switch msg.Type {
+		case tea.KeyTab:
+			m.projectSelectMode = true
+			return true
+		}
+		if msg.String() == KeyFocusSwitch {
+			m.projectSelectMode = true
+			return true
+		}
+		return false
+	}
+
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.statusMsg = "input cancelled"
+		m.endInput()
+		return true
+	case tea.KeyEnter:
+		m.submitInput()
+		return true
+	case tea.KeyUp:
+		m.moveProjectSelection(-1)
+		return true
+	case tea.KeyDown:
+		m.moveProjectSelection(1)
+		return true
+	case tea.KeyTab:
+		m.projectSelectMode = false
+		m.inputCursor = len([]rune(m.inputValue))
+		return true
+	case tea.KeyRunes:
+		if len(msg.Runes) == 0 {
+			return true
+		}
+		s := string(msg.Runes)
+		if s == "j" {
+			m.moveProjectSelection(1)
+			return true
+		}
+		if s == "k" {
+			m.moveProjectSelection(-1)
+			return true
+		}
+		m.projectSelectMode = false
+		m.insertInputText(s)
+		return true
+	}
+
+	switch msg.String() {
+	case KeyEsc:
+		m.statusMsg = "input cancelled"
+		m.endInput()
+	case KeySelect:
+		m.submitInput()
+	case KeyUp, "up":
+		m.moveProjectSelection(-1)
+	case KeyDown, "down":
+		m.moveProjectSelection(1)
+	case KeyFocusSwitch:
+		m.projectSelectMode = false
+		m.inputCursor = len([]rune(m.inputValue))
+	}
+	return true
 }
 
 func (m *Model) submitInput() {
@@ -736,17 +863,26 @@ func (m *Model) submitInput() {
 			m.endInput()
 			return
 		}
+		projectText := text
+		if m.projectSelectMode {
+			selected := m.currentProjectOption()
+			if selected == projectNoneOption {
+				projectText = ""
+			} else {
+				projectText = selected
+			}
+		}
 		uc := usecase.UpdateTaskUseCase{Repo: repo}
-		if err := uc.SetProject(context.Background(), task.ID, text); err != nil {
+		if err := uc.SetProject(context.Background(), task.ID, projectText); err != nil {
 			m.statusMsg = fmt.Sprintf("set project failed: %v", err)
 			m.endInput()
 			return
 		}
-		if text == "" {
+		if projectText == "" {
 			m.statusMsg = fmt.Sprintf("cleared project #%d", task.ID)
 		} else {
-			m.statusMsg = fmt.Sprintf("project #%d -> %s", task.ID, text)
-			focusProject = text
+			m.statusMsg = fmt.Sprintf("project #%d -> %s", task.ID, projectText)
+			focusProject = projectText
 		}
 	case inputDue:
 		task, ok := m.currentTaskForAction()
@@ -1043,6 +1179,17 @@ func (m *Model) undoLastDelete() {
 		}
 		m.undoStack = m.undoStack[:idx]
 		m.statusMsg = fmt.Sprintf("undid delete project %s", action.project)
+	case undoTaskStatus:
+		uc := usecase.UpdateTaskUseCase{Repo: m.queryUseCase.Repo}
+		for i := len(action.statusChanges) - 1; i >= 0; i-- {
+			change := action.statusChanges[i]
+			if err := uc.SetStatus(ctx, change.taskID, change.from); err != nil {
+				m.statusMsg = fmt.Sprintf("undo failed: %v", err)
+				return
+			}
+		}
+		m.undoStack = m.undoStack[:idx]
+		m.statusMsg = fmt.Sprintf("undid status change of %d task(s)", len(action.statusChanges))
 	default:
 		m.undoStack = m.undoStack[:idx]
 		m.statusMsg = "nothing to undo"
@@ -1060,7 +1207,9 @@ func (m *Model) markCurrentTaskToday() {
 		return
 	}
 	uc := usecase.UpdateTaskUseCase{Repo: m.queryUseCase.Repo}
+	target := domain.StatusDoing
 	if task.Status == domain.StatusDoing {
+		target = domain.StatusTodo
 		if err := uc.Reopen(context.Background(), []int64{task.ID}); err != nil {
 			m.statusMsg = fmt.Sprintf("set todo failed: %v", err)
 			return
@@ -1073,6 +1222,16 @@ func (m *Model) markCurrentTaskToday() {
 		}
 		m.statusMsg = fmt.Sprintf("today #%d", task.ID)
 	}
+	if task.Status != target {
+		m.pushUndo(undoAction{
+			kind: undoTaskStatus,
+			statusChanges: []taskStatusChange{{
+				taskID: task.ID,
+				from:   task.Status,
+				to:     target,
+			}},
+		})
+	}
 	m.reload()
 }
 
@@ -1081,12 +1240,24 @@ func (m *Model) completeCurrentTask() {
 	if !ok {
 		return
 	}
+	if task.Status == domain.StatusDone {
+		m.statusMsg = fmt.Sprintf("already done #%d", task.ID)
+		return
+	}
 	uc := usecase.UpdateTaskUseCase{Repo: m.queryUseCase.Repo}
 	if err := uc.MarkDone(context.Background(), []int64{task.ID}); err != nil {
 		m.statusMsg = fmt.Sprintf("set done failed: %v", err)
 		return
 	}
-	m.statusMsg = fmt.Sprintf("done #%d", task.ID)
+	m.pushUndo(undoAction{
+		kind: undoTaskStatus,
+		statusChanges: []taskStatusChange{{
+			taskID: task.ID,
+			from:   task.Status,
+			to:     domain.StatusDone,
+		}},
+	})
+	m.statusMsg = fmt.Sprintf("done #%d (z undo)", task.ID)
 	m.reload()
 	if m.listCursor >= len(m.tasks) && m.listCursor > 0 {
 		m.listCursor--
@@ -1100,6 +1271,9 @@ func (m Model) inputPrompt() string {
 	case inputEdit:
 		return "edit> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputTaskProject:
+		if m.projectSelectMode {
+			return "project pick(j/k,Tab new)> " + m.currentProjectOption()
+		}
 		return "project> " + renderCursorAt(m.inputValue, m.inputCursor)
 	case inputDue:
 		return "due(YYYY-MM-DD HH:MM)> " + renderCursorAt(m.inputValue, m.inputCursor)
@@ -1109,6 +1283,61 @@ func (m Model) inputPrompt() string {
 		return "project rename> " + renderCursorAt(m.inputValue, m.inputCursor)
 	default:
 		return m.statusMsg
+	}
+}
+
+func buildProjectOptions(projects []string, current string) []string {
+	opts := make([]string, 0, len(projects)+2)
+	opts = append(opts, projectNoneOption)
+	seen := map[string]struct{}{
+		projectNoneOption: {},
+	}
+	for _, name := range projects {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		opts = append(opts, name)
+		seen[name] = struct{}{}
+	}
+	current = strings.TrimSpace(current)
+	if current != "" {
+		if _, ok := seen[current]; !ok {
+			opts = append(opts, current)
+		}
+	}
+	return opts
+}
+
+func (m *Model) currentProjectOption() string {
+	if len(m.projectOptions) == 0 {
+		m.projectOptions = []string{projectNoneOption}
+		m.projectSelectIndex = 0
+	}
+	if m.projectSelectIndex < 0 {
+		m.projectSelectIndex = 0
+	}
+	if m.projectSelectIndex >= len(m.projectOptions) {
+		m.projectSelectIndex = len(m.projectOptions) - 1
+	}
+	return m.projectOptions[m.projectSelectIndex]
+}
+
+func (m *Model) moveProjectSelection(delta int) {
+	if len(m.projectOptions) == 0 {
+		m.projectOptions = []string{projectNoneOption}
+		m.projectSelectIndex = 0
+		return
+	}
+	m.projectSelectIndex += delta
+	if m.projectSelectIndex < 0 {
+		m.projectSelectIndex = 0
+	}
+	if m.projectSelectIndex >= len(m.projectOptions) {
+		m.projectSelectIndex = len(m.projectOptions) - 1
 	}
 }
 

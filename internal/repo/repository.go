@@ -18,6 +18,7 @@ type TaskRepository interface {
 	UpdateTitle(ctx context.Context, id int64, title string) error
 	UpdateProject(ctx context.Context, id int64, project string) error
 	UpdateDueAt(ctx context.Context, id int64, dueAt *time.Time) error
+	SetStatus(ctx context.Context, id int64, status domain.Status) error
 	MarkDone(ctx context.Context, ids []int64) error
 	MarkDoing(ctx context.Context, ids []int64) error
 	Reopen(ctx context.Context, ids []int64) error

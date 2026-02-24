@@ -443,6 +443,36 @@ func (r *TaskRepository) UpdateDueAt(ctx context.Context, id int64, dueAt *time.
 	return nil
 }
 
+func (r *TaskRepository) SetStatus(ctx context.Context, id int64, status domain.Status) error {
+	if !domain.IsValidStatus(status) {
+		return domain.ErrInvalidStatus
+	}
+	var doneAt any
+	if status == domain.StatusDone {
+		doneAt = time.Now().UTC()
+	} else {
+		doneAt = nil
+	}
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE tasks
+		    SET status = ?, done_at = ?, updated_at = CURRENT_TIMESTAMP
+		  WHERE id = ?`,
+		string(status), doneAt, id,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrTaskNotFound
+	}
+	return nil
+}
+
 func (r *TaskRepository) transit(ctx context.Context, ids []int64, to domain.Status) error {
 	if len(ids) == 0 {
 		return nil

@@ -94,9 +94,10 @@ func (s *projectRepoStub) UpdateProject(context.Context, int64, string) error {
 func (s *projectRepoStub) UpdateDueAt(context.Context, int64, *time.Time) error {
 	return nil
 }
-func (s *projectRepoStub) MarkDone(context.Context, []int64) error   { return nil }
-func (s *projectRepoStub) MarkDoing(context.Context, []int64) error  { return nil }
-func (s *projectRepoStub) Reopen(context.Context, []int64) error     { return nil }
-func (s *projectRepoStub) SoftDelete(context.Context, []int64) error { return nil }
-func (s *projectRepoStub) Restore(context.Context, []int64) error    { return nil }
-func (s *projectRepoStub) Purge(context.Context, []int64) error      { return nil }
+func (s *projectRepoStub) SetStatus(context.Context, int64, domain.Status) error { return nil }
+func (s *projectRepoStub) MarkDone(context.Context, []int64) error               { return nil }
+func (s *projectRepoStub) MarkDoing(context.Context, []int64) error              { return nil }
+func (s *projectRepoStub) Reopen(context.Context, []int64) error                 { return nil }
+func (s *projectRepoStub) SoftDelete(context.Context, []int64) error             { return nil }
+func (s *projectRepoStub) Restore(context.Context, []int64) error                { return nil }
+func (s *projectRepoStub) Purge(context.Context, []int64) error                  { return nil }
