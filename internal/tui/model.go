@@ -456,13 +456,11 @@ func isTodayProgressTask(task domain.Task, now time.Time) bool {
 	case domain.StatusDoing:
 		return true
 	case domain.StatusDone:
-		if task.DoneAt != nil {
-			done := task.DoneAt.In(loc)
-			if !done.Before(dayStart) && done.Before(dayEnd) {
-				return true
-			}
+		if task.DoneAt == nil {
+			return false
 		}
-		fallthrough
+		done := task.DoneAt.In(loc)
+		return !done.Before(dayStart) && done.Before(dayEnd)
 	case domain.StatusTodo:
 		if task.DueAt == nil {
 			return false

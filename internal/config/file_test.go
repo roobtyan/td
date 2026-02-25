@@ -15,6 +15,9 @@ func TestSaveAndLoadUserConfig(t *testing.T) {
 			Model:    "deepseek-chat",
 			Timeout:  20,
 		},
+		GitHub: GitHubConfig{
+			Token: "ghp_testtoken",
+		},
 	}
 
 	if err := SaveUserConfig(path, in); err != nil {
@@ -40,6 +43,9 @@ func TestSaveAndLoadUserConfig(t *testing.T) {
 	if out.AI.Timeout != in.AI.Timeout {
 		t.Fatalf("timeout = %d, want %d", out.AI.Timeout, in.AI.Timeout)
 	}
+	if out.GitHub.Token != in.GitHub.Token {
+		t.Fatalf("github.token = %q, want %q", out.GitHub.Token, in.GitHub.Token)
+	}
 }
 
 func TestLoadUserConfigNotExistsShouldReturnEmpty(t *testing.T) {
@@ -48,7 +54,7 @@ func TestLoadUserConfigNotExistsShouldReturnEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.AI.Provider != "" || cfg.AI.APIKey != "" || cfg.AI.Timeout != 0 {
+	if cfg.AI.Provider != "" || cfg.AI.APIKey != "" || cfg.AI.Timeout != 0 || cfg.GitHub.Token != "" {
 		t.Fatalf("cfg = %#v, want empty", cfg)
 	}
 }

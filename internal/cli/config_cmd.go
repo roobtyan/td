@@ -20,12 +20,19 @@ const (
 	aiFieldTimeout  aiField = "timeout"
 )
 
+type githubField string
+
+const (
+	githubFieldToken githubField = "token"
+)
+
 func newConfigCmd(cfg config.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Manage td config",
 	}
 	cmd.AddCommand(newConfigAICmd(cfg))
+	cmd.AddCommand(newConfigGitHubCmd(cfg))
 	return cmd
 }
 
@@ -135,6 +142,102 @@ func newConfigAIShowCmd(cfg config.Config) *cobra.Command {
 	}
 }
 
+func newConfigGitHubCmd(cfg config.Config) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "github",
+		Short: "Manage GitHub config",
+	}
+	cmd.AddCommand(newConfigGitHubSetCmd(cfg))
+	cmd.AddCommand(newConfigGitHubGetCmd(cfg))
+	cmd.AddCommand(newConfigGitHubUnsetCmd(cfg))
+	cmd.AddCommand(newConfigGitHubShowCmd(cfg))
+	return cmd
+}
+
+func newConfigGitHubSetCmd(cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set GitHub config item",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			field, err := parseGitHubField(args[0])
+			if err != nil {
+				return err
+			}
+			userCfg, err := config.LoadUserConfig(cfg.ConfigToml)
+			if err != nil {
+				return err
+			}
+			setGitHubField(&userCfg.GitHub, field, args[1])
+			if err := config.SaveUserConfig(cfg.ConfigToml, userCfg); err != nil {
+				return err
+			}
+			cmd.Printf("saved github.%s\n", field)
+			return nil
+		},
+	}
+}
+
+func newConfigGitHubGetCmd(cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <key>",
+		Short: "Get GitHub config item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			field, err := parseGitHubField(args[0])
+			if err != nil {
+				return err
+			}
+			userCfg, err := config.LoadUserConfig(cfg.ConfigToml)
+			if err != nil {
+				return err
+			}
+			cmd.Println(getGitHubField(userCfg.GitHub, field))
+			return nil
+		},
+	}
+}
+
+func newConfigGitHubUnsetCmd(cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "unset <key>",
+		Short: "Unset GitHub config item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			field, err := parseGitHubField(args[0])
+			if err != nil {
+				return err
+			}
+			userCfg, err := config.LoadUserConfig(cfg.ConfigToml)
+			if err != nil {
+				return err
+			}
+			unsetGitHubField(&userCfg.GitHub, field)
+			if err := config.SaveUserConfig(cfg.ConfigToml, userCfg); err != nil {
+				return err
+			}
+			cmd.Printf("unset github.%s\n", field)
+			return nil
+		},
+	}
+}
+
+func newConfigGitHubShowCmd(cfg config.Config) *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Show GitHub config",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			userCfg, err := config.LoadUserConfig(cfg.ConfigToml)
+			if err != nil {
+				return err
+			}
+			cmd.Printf("token: %s\n", maskSecret(userCfg.GitHub.Token))
+			return nil
+		},
+	}
+}
+
 func parseAIField(raw string) (aiField, error) {
 	key := strings.ToLower(strings.TrimSpace(raw))
 	key = strings.ReplaceAll(key, "-", "_")
@@ -151,6 +254,17 @@ func parseAIField(raw string) (aiField, error) {
 		return aiFieldTimeout, nil
 	default:
 		return "", fmt.Errorf("unsupported ai key: %s", raw)
+	}
+}
+
+func parseGitHubField(raw string) (githubField, error) {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	key = strings.ReplaceAll(key, "-", "_")
+	switch key {
+	case "token", "pat", "api_key":
+		return githubFieldToken, nil
+	default:
+		return "", fmt.Errorf("unsupported github key: %s", raw)
 	}
 }
 
@@ -187,6 +301,13 @@ func setAIField(aiCfg *config.AIConfig, field aiField, value string) error {
 	return nil
 }
 
+func setGitHubField(githubCfg *config.GitHubConfig, field githubField, value string) {
+	switch field {
+	case githubFieldToken:
+		githubCfg.Token = strings.TrimSpace(value)
+	}
+}
+
 func getAIField(aiCfg config.AIConfig, field aiField) string {
 	switch field {
 	case aiFieldProvider:
@@ -207,6 +328,15 @@ func getAIField(aiCfg config.AIConfig, field aiField) string {
 	}
 }
 
+func getGitHubField(githubCfg config.GitHubConfig, field githubField) string {
+	switch field {
+	case githubFieldToken:
+		return githubCfg.Token
+	default:
+		return ""
+	}
+}
+
 func unsetAIField(aiCfg *config.AIConfig, field aiField) {
 	switch field {
 	case aiFieldProvider:
@@ -219,6 +349,13 @@ func unsetAIField(aiCfg *config.AIConfig, field aiField) {
 		aiCfg.Model = ""
 	case aiFieldTimeout:
 		aiCfg.Timeout = 0
+	}
+}
+
+func unsetGitHubField(githubCfg *config.GitHubConfig, field githubField) {
+	switch field {
+	case githubFieldToken:
+		githubCfg.Token = ""
 	}
 }
 

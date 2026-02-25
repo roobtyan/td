@@ -18,8 +18,13 @@ type AIConfig struct {
 	Timeout  int
 }
 
+type GitHubConfig struct {
+	Token string
+}
+
 type UserConfig struct {
-	AI AIConfig
+	AI     AIConfig
+	GitHub GitHubConfig
 }
 
 func LoadUserConfig(path string) (UserConfig, error) {
@@ -45,10 +50,6 @@ func LoadUserConfig(path string) (UserConfig, error) {
 			section = strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
 			continue
 		}
-		if section != "ai" {
-			continue
-		}
-
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			return out, fmt.Errorf("invalid config line %d", lineNo)
@@ -56,26 +57,34 @@ func LoadUserConfig(path string) (UserConfig, error) {
 
 		key := normalizeConfigKey(parts[0])
 		val := strings.TrimSpace(parts[1])
-		switch key {
-		case "provider":
-			out.AI.Provider = parseConfigString(val)
-		case "api_key":
-			out.AI.APIKey = parseConfigString(val)
-		case "base_url":
-			out.AI.BaseURL = parseConfigString(val)
-		case "model":
-			out.AI.Model = parseConfigString(val)
-		case "timeout":
-			raw := parseConfigString(val)
-			if strings.TrimSpace(raw) == "" {
-				out.AI.Timeout = 0
-				continue
+		switch section {
+		case "ai":
+			switch key {
+			case "provider":
+				out.AI.Provider = parseConfigString(val)
+			case "api_key":
+				out.AI.APIKey = parseConfigString(val)
+			case "base_url":
+				out.AI.BaseURL = parseConfigString(val)
+			case "model":
+				out.AI.Model = parseConfigString(val)
+			case "timeout":
+				raw := parseConfigString(val)
+				if strings.TrimSpace(raw) == "" {
+					out.AI.Timeout = 0
+					continue
+				}
+				n, err := strconv.Atoi(raw)
+				if err != nil {
+					return out, fmt.Errorf("invalid ai.timeout at line %d", lineNo)
+				}
+				out.AI.Timeout = n
 			}
-			n, err := strconv.Atoi(raw)
-			if err != nil {
-				return out, fmt.Errorf("invalid ai.timeout at line %d", lineNo)
+		case "github":
+			switch key {
+			case "token":
+				out.GitHub.Token = parseConfigString(val)
 			}
-			out.AI.Timeout = n
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -100,6 +109,9 @@ func SaveUserConfig(path string, cfg UserConfig) error {
 	} else {
 		b.WriteString("timeout = 0\n")
 	}
+	b.WriteString("\n")
+	b.WriteString("[github]\n")
+	b.WriteString(`token = ` + strconv.Quote(cfg.GitHub.Token) + "\n")
 
 	return os.WriteFile(path, []byte(b.String()), 0o600)
 }

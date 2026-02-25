@@ -53,13 +53,14 @@ func TestTodayProgressUsesCurrentRuleScope(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
 	todayDue := now.Add(2 * time.Hour)
 	todayDoneDue := now.Add(1 * time.Hour)
+	todayDoneAt := now.Add(-30 * time.Minute)
 	futureDue := now.Add(30 * time.Hour)
 
 	r := &fakeTaskRepo{
 		tasks: []domain.Task{
 			{ID: 1, Title: "doing-a", Status: domain.StatusDoing},
 			{ID: 2, Title: "todo-today", Status: domain.StatusTodo, DueAt: &todayDue},
-			{ID: 3, Title: "done-today", Status: domain.StatusDone, DueAt: &todayDoneDue},
+			{ID: 3, Title: "done-today", Status: domain.StatusDone, DueAt: &todayDoneDue, DoneAt: &todayDoneAt},
 			{ID: 4, Title: "todo-future", Status: domain.StatusTodo, DueAt: &futureDue},
 		},
 	}
@@ -112,6 +113,34 @@ func TestTodayProgressShouldCountDoneAtTodayWithoutDue(t *testing.T) {
 	view := ansi.Strip(m.View())
 	if !strings.Contains(view, "1/1") {
 		t.Fatalf("today progress should include done_at-today task without due, view=%q", view)
+	}
+}
+
+func TestTodayProgressShouldNotCountDoneTaskFromPreviousDay(t *testing.T) {
+	loc := time.FixedZone("CST", 8*3600)
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, loc)
+	dueYesterday := time.Date(2026, 2, 23, 12, 0, 0, 0, loc)
+	doneYesterday := time.Date(2026, 2, 23, 21, 0, 0, 0, loc)
+
+	r := &fakeTaskRepo{
+		tasks: []domain.Task{
+			{
+				ID:     1,
+				Title:  "finished yesterday",
+				Status: domain.StatusDone,
+				DueAt:  &dueYesterday,
+				DoneAt: &doneYesterday,
+			},
+		},
+	}
+
+	m := NewModelWithRepo(r)
+	m.now = func() time.Time { return now }
+	m.reload()
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "0/0") {
+		t.Fatalf("today progress should exclude done task from previous day, view=%q", view)
 	}
 }
 

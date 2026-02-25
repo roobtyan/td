@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"os"
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"td/internal/buildinfo"
+	"td/internal/config"
 	"td/internal/updater"
 )
 
-func newUpgradeCmd() *cobra.Command {
+func newUpgradeCmd(cfg config.Config) *cobra.Command {
 	var checkOnly bool
 
 	cmd := &cobra.Command{
@@ -18,6 +22,7 @@ func newUpgradeCmd() *cobra.Command {
 				Owner:          buildinfo.RepoOwner,
 				Repo:           buildinfo.RepoName,
 				CurrentVersion: buildinfo.Version,
+				GitHubToken:    resolveGitHubToken(cfg),
 			})
 
 			if checkOnly {
@@ -50,4 +55,18 @@ func newUpgradeCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&checkOnly, "check", false, "check for updates only")
 	return cmd
+}
+
+func resolveGitHubToken(cfg config.Config) string {
+	if token := strings.TrimSpace(os.Getenv("GH_TOKEN")); token != "" {
+		return token
+	}
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		return token
+	}
+	userCfg, err := config.LoadUserConfig(cfg.ConfigToml)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(userCfg.GitHub.Token)
 }
